@@ -23,21 +23,38 @@
 ;;; Destructuring in the Domain
 ;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; Generally, you can destructure elements in the domain in the same way
-;; you would in a `let` or `doseq` clause.
+;; You can destructure elements in the domain in the same way
+;; you would in a `let` or `doseq` binding. This includes:
+;; {(:keys|:syms|:strs) [...] :as ...} and {sym1 literal1 ... symk literalk} for maps
+;; and [p] or [p1 ... pk] for vectors/lists treated as pairs (or taken k at a time -- but
+;; that's described later).
 
-;; Here we transform a map (from person records - maps of id and name -
-;; to last known locations - pair of latitude, longitude) to a map from
-;; longitudes to people who have been there recently.
-(def invade-privacy (p/transformer {{:keys [name]} [_ lon]}
-                                   {lon #{name}}))
+(def group-by-sum-of-dice (p/transformer {{:keys [name]} [roll1 roll2]}
+                                         ;; the range can contain arbitrary expressions
+                                         {(+ roll1 roll2) #{(clojure.string/upper-case name)}}))
 
-(invade-privacy {{:id "A75" :name "Slothrop"}         [89.67 45.21]
-                 {:id "B82" :name "Sugar Plum Fairy"} [56.78 45.21]
-                 {:id "C92" :name "Tom"}              [56.78 86.3]})
-;; => {45.21 #{"Slothrop" "Sugar Plum Fairy"}, 86.3 #{"Tom"}}
+(group-by-sum-of-dice {{:id "A75" :name "Slothrop"}         [3 5]
+                       {:id "B82" :name "Sugar Plum Fairy"} [2 6]
+                       {:id "C92" :name "Tom"}              [1 1]})
+;; => {8 #{"SLOTHROP" "SUGAR PLUM FAIRY"}, 2 #{"TOM"}}
 
-;; Alternatively, you can use the {name :name, id :id} style instead of {:keys [id name]}
+
+;; This takes a vector of records -- like one you'd get from JDBC --
+;; and turns it into a nested map:
+(def by-composer-and-year (p/transformer [{:keys [composer year] :as piece}]
+                                         {composer {year [piece]}}))
+
+(by-composer-and-year [{:composer "Bartók" :title "Piano Concerto 1" :year 1926}
+                       {:composer "Bartók" :title "String Quartet 2" :year 1917}
+                       {:composer "Ligeti" :title "Etude 1" :year 1985}
+                       {:composer "Ligeti" :title "Mysteries of the Macabre" :year 1992}])
+;; =>
+;;{"Bartók"
+;; {1926 [{:composer "Bartók", :title "Piano Concerto 1", :year 1926}],
+;;  1917 [{:composer "Bartók", :title "String Quartet 2", :year 1917}]},
+;; "Ligeti"
+;; {1985 [{:composer "Ligeti", :title "Etude 1", :year 1985}],
+;;  1992 [{:composer "Ligeti", :title "Mysteries of the Macabre", :year 1992}]}}
 
 ;;;;;;
 ;; Destructuring n-tuples is a special case of destructuring a sequence taken n at a time:
@@ -51,16 +68,37 @@
 ;;; Filtering
 ;;;;;;;;;;;;;;;;;;;;;;;;
 
-;;(defn filter' [p coll]
-;;  (p/transform coll [a] [a]
-;;               :where [(p a)]))
+;; Add a :where clause -- vector of clojure expressions -- to
+;; collect only items for which all the expressions are true.
+;; the :where clauses can be aribtary expressions and contain
+;; variables bound in the domain.
+(defn filter' [p coll]
+  (p/transform coll [a] [a] :where [(p a)]))
+
+(filter' #(< % 5) [3 4 5 6]) ;; => [3 4]
+
+
+;; plum is intelligent enough to check if predicates are true
+;; as soon as all symbols used in them are defined. For example, this
+;; terminates instantly:
+(p/transform {:infinite (range)}
+             {k [n]} {n k}
+             :where [(= 1 0)])
+;; => {}
+
+
+;; This finds all pairs of students and professors (and the class that links them)
+;; where the student and professor have the same name.
+;;(def same-names (p/transform {{:name prof-name}
+;;                              {:students {:name student-name}
+;;                               :name class-name}}
+;;                             [{:prof prof-name
+;;                               :student student-name
+;;                               :class class-name}]
+;;                             :where [(= prof-name student-name)
+;;                                     (not= prof-name "Meyers")]))
+;;(same-names {{:name "Meyers"
+;;              :id "A820"}
+;;             {:name "AI"
+;;              :students [""]}})
 ;;
-
-;; predicates evalled as soon as possible
-
-
-;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Arbitrary Expressions in the range
-;;;;;;;;;;;;;;;;;;;;;;;;
-
-;; (defn map' [f coll] (p/transform coll [a] [(f a)]))
