@@ -64,6 +64,8 @@
 ;; Key Literals (and ambiguities)
 ;;;;;;
 
+;; :keys, :syms, :strs, :as
+
 ;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Filtering
 ;;;;;;;;;;;;;;;;;;;;;;;;
