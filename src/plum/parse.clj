@@ -16,8 +16,7 @@
 ;;
 ;; MapEntry := (:keys | :syms | :strs) [Symbol*]
 ;;           | :as Symbol
-;;           | [p1 ... pk] Domain
-;;           | Symbol Domain
+;;           | (Vector Destructure | Symbol | Map Destructure) Domain
 ;;           | (Keyword | String) Domain
 ;;           | (:literal ClojureExp) Domain
 ;;
@@ -68,7 +67,7 @@
                              :env (conj parent-env v)
                              :children nil}
 
-                            (or (vector? k) (symbol? k))
+                            (or (map? k) (vector? k) (symbol? k))
                             (let [new-env (set/union parent-env (symbols k))]
                               {:bind {:type :destructure, :against :map, :lvalue k}
                                :env new-env
