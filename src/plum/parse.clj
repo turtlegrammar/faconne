@@ -32,59 +32,61 @@
   "[{:bind {:type (:destructure | :as | :literal)
            :against (:vector | :map | :set | :leaf)
            :lvalue Symbol
-           :key ClojureExp (only if (:type == :literal)
-           :env  #{x | x is defined in this binding or in parent bindings}}}
-  :children [parsed domains]]"
+           :key ClojureExp (only if (:type == :literal))
+           }
+  :env  #{x | x is defined in this binding or in parent bindings}
+  :children [parsed domains]}]"
   [dom]
   (letfn [(go [dom parent-env]
               (cond (symbol? dom)
-                    [{:bind {:type :destructure, :against :leaf, :lvalue dom,
-                             :env (conj parent-env dom)}
+                    [{:bind {:type :destructure, :against :leaf, :lvalue dom}
+                      :env (conj parent-env dom)
                       :children nil}]
 
                     (or (vector? dom))
-                    [{:bind {:type :destructure, :against :vector, :lvalue nil,
-                             :env parent-env}
+                    [{:bind {:type :destructure, :against :vector, :lvalue nil}
+                      :env parent-env
                       :children (mapcat #(go % parent-env) dom)}]
 
                     (set? dom)
                     (if (> (count dom) 1)
                       (throw (Exception. "Sets in the domain can have only one element."))
-                      [{:bind {:type :destructure, :against :set, :lvalue nil,
-                               :env parent-env}
+                      [{:bind {:type :destructure, :against :set, :lvalue nil}
+                        :env parent-env
                         :children (mapcat #(go % parent-env) dom)}])
 
                     (map? dom)
                     (for [[k v] dom]
                       (cond (#{:keys :strs :syms} k)
-                            {:bind {:type :destructure, :against :leaf, :lvalue v,
-                                    :env (set/union parent-env (symbols v))}
+                            {:bind {:type :destructure, :against :leaf,
+                                    :lvalue {k v}}
+                             :env (set/union parent-env (symbols v))
                              :children nil}
 
                             (= :as k)
-                            {:bind {:type :as, :against :leaf, :lvalue v,
-                                    :env (conj parent-env v)}
+                            {:bind {:type :as, :against :leaf, :lvalue v}
+                             :env (conj parent-env v)
                              :children nil}
 
                             (or (vector? k) (symbol? k))
                             (let [new-env (set/union parent-env (symbols k))]
-                              {:bind {:type :destructure, :against :map, :lvalue k,
-                                      :env new-env}
+                              {:bind {:type :destructure, :against :map, :lvalue k}
+                               :env new-env
                                :children (go v new-env)})
 
                             (list? k)
                             (let [[h t] k
                                   new-env (conj parent-env t)]
                               (if (= h :literal)
-                                {:bind {:type :literal, :against :map, :key t,
-                                        :env new-env}
+                                {:bind {:type :literal, :against :map, :key t}
+                                 :env new-env
                                  :children (go v new-env)}
                                 (throw (Exception. (str "Unsupported binding type: " h ". "
                                                         "Did you mean `:literal`?")))))
 
                             (or (keyword? k) (string? k))
-                            {:bind {:type :literal, :against :map, :key k,
-                                    :env parent-env}
+                            {:bind {:type :literal, :against :map, :key k}
+                             :env parent-env
                              :children (go v parent-env)}))))]
     (go dom #{})))
 
@@ -95,6 +97,7 @@
         first-id (get-id)]
     (letfn [(go [domain parent-id]
                 (let [this-id (get-id)]
+                  ;; felt awfully clever when i wrote this
                   (some-> domain
                           (assoc-in [:bind :parent-id] parent-id)
                           (assoc-in [:bind :id] this-id)
@@ -107,52 +110,11 @@
               (if-not (empty? domains)
                 (let [bindings   (mapv :bind domains)
                       joined-env (reduce set/union parent-env
-                                         (map :env bindings))]
+                                         (map :env domains))]
                   {:bindings bindings
                    :env joined-env
                    :child (go (mapcat :children domains) joined-env)})))]
     (go domains #{})))
-
-(defn merge-leaf-into-parent
-  [parent leaf]
-  (if-not leaf
-    parent
-    (let [{lenv :env llvalue :lvalue} leaf]
-      (-> parent
-          (update :env #(set/union % lenv))
-          (update :lvalue #(if-not % llvalue [% llvalue]))))))
-
-(defn lift-leaves
-  [domain]
-  (if (or (not domain) (not (:child domain)))
-    domain
-    (let [child (lift-leaves (:child domain))
-
-          {child-leaf-bindings true non-terminals false}
-          (group-by #(= :leaf (:against %)) (:bindings child))
-
-          parent-child-pairs (for [parent (:bindings domain)]
-                               ;; i'm pretty sure that there can't be multiple leaves
-                               ;; to a parent binding frame
-                               [parent (first (filter #(= (:id parent) (:parent-id %))
-                                                      child-leaf-bindings))])
-
-          updated-bindings (map (partial apply merge-leaf-into-parent) parent-child-pairs)
-
-          updated-env (reduce set/union #{} (mapv :env updated-bindings))
-
-          updated-child (if (not-empty non-terminals)
-                          (assoc child :bindings non-terminals))]
-      (-> domain
-          (assoc :child updated-child)
-          (assoc :bindings updated-bindings)
-          (assoc :env updated-env)))))
-
-(defn remove-binding-specific-envs
-  [domain]
-  (some-> domain
-          (update :bindings #(mapv (fn [b] (dissoc b :env)) %))
-          (update :child remove-binding-specific-envs)))
 
 (defn maximal-environment
   [parsed-domain]
@@ -187,6 +149,7 @@
       (go clauses-with-envs pdomain))))
 
 (defn parse-range
+  "Unbelievably ugly. Really need to change this."
   [structure]
   (let [empty-result (cond (map? structure) {}
                            (set? structure) #{}
@@ -215,14 +178,13 @@
              :empty empty-result
              :nest nest}))))
 
+(def analyze-domain
+  "Choose important-sounding words for important functions."
+  (comp squash assign-bind-ids parse-domain))
+
 (defn parse
   [domain range where]
-  (let [pdomain (-> domain
-                    parse-domain
-                    assign-bind-ids
-                    squash
-                    lift-leaves
-                    remove-binding-specific-envs)
+  (let [pdomain (analyze-domain domain)
         prange (parse-range range)
 
         where-domain (add-where-clauses-to-parsed-domain
