@@ -1,6 +1,7 @@
 (ns plum.parse
   (:require [clojure.set :as set]
-            [clojure.walk :as walk]))
+            [clojure.walk :as walk]
+            [clojure.core.match :refer [match]]))
 
 ;; Grammar for Domains:
 ;; Domain := Symbol [terminal]
@@ -30,7 +31,7 @@
 (defn parse-domain
   "[{:bind {:type ([:map lvalue]          |
                    [:set]                 |
-                   [:vector num_children] |
+                   [:vector num-children] |
                    [:literal key]         |
                    [:as lvalue]           |
                    [:leaf lvalue])}
@@ -96,12 +97,24 @@
         get-id #(do (swap! id inc) @id)
         first-id (get-id)]
     (letfn [(go [domain parent-id]
-                (let [this-id (get-id)]
-                  ;; felt awfully clever when i wrote this
-                  (some-> domain
-                          (assoc-in [:bind :parent-id] parent-id)
-                          (assoc-in [:bind :id] this-id)
-                          (update :children (partial mapv #(go % this-id))))))]
+                (if-let [type (-> domain :bind :type)]
+                  (match type
+                         [:vector num-children]
+                         (let [these-ids (for [_ (range num-children)] (get-id))
+                               children-par-id-pairs (map vector (:children domain) these-ids)
+                               assigned-children (for [[child par-id] children-par-id-pairs]
+                                                   (go child par-id))]
+                           (-> domain
+                               (assoc-in [:bind :parent-id] parent-id)
+                               (assoc-in [:bind :id] these-ids)
+                               (assoc :children assigned-children)))
+
+                         :else
+                         (let [this-id (get-id)]
+                           (-> domain
+                               (assoc-in [:bind :parent-id] parent-id)
+                               (assoc-in [:bind :id] this-id)
+                               (update :children (partial mapv #(go % this-id))))))))]
       (mapv #(go % first-id) domains))))
 
 (defn squash

@@ -60,11 +60,13 @@
   [bindings struct-sym-map]
   (loop [let-bindings []
          doseq-bindings []
+         loop-bindings {} ;; at most one per level
          [binding & rest-bindings] bindings
          struct-sym-map struct-sym-map]
     (if-not binding
       {:let-bindings let-bindings
        :doseq-bindings doseq-bindings
+       :loop-bindings loop-bindings
        :struct-sym-map struct-sym-map}
       (let [{:keys [type parent-id id]} binding
             parent-sym (struct-sym-map parent-id)]
@@ -74,12 +76,14 @@
                (let [new-parent (gensym "map-val-parent")]
                  (recur let-bindings
                         (conj doseq-bindings [lvalue new-parent] parent-sym)
+                        loop-bindings
                         rest-bindings
                         (assoc struct-sym-map id new-parent)))
 
                [:leaf lvalue]
                (recur (conj let-bindings lvalue parent-sym)
                       doseq-bindings
+                      loop-bindings
                       rest-bindings
                       struct-sym-map)
 
@@ -87,19 +91,36 @@
                (let [new-parent (gensym "set-parent")]
                  (recur let-bindings
                         (conj doseq-bindings new-parent parent-sym)
+                        loop-bindings
                         rest-bindings
                         (assoc struct-sym-map id new-parent)))
 
-               [:vector _]
-               (let [new-parent (gensym "set-parent")]
-                 (recur let-bindings
-                        (conj doseq-bindings new-parent parent-sym)
-                        rest-bindings
-                        (assoc struct-sym-map id new-parent)))
+               [:vector num-children]
+               (if (= 1 num-children)
+                 (let [new-parent (gensym "vec-parent")]
+                   (recur let-bindings
+                          (conj doseq-bindings new-parent parent-sym)
+                          loop-bindings
+                          rest-bindings
+                          (assoc struct-sym-map (first id) new-parent)))
+
+                 (let [new-parents (for [_ id] (gensym "vec-elem"))
+                       new-sym-map (reduce (fn [acc [this-id sym]]
+                                             (assoc acc this-id sym))
+                                           struct-sym-map
+                                           (map vector id new-parents))]
+                   (recur let-bindings
+                          doseq-bindings
+                          {:part-size num-children
+                           :elem-syms new-parents
+                           :vec-sym parent-sym}
+                          rest-bindings
+                          new-sym-map)))
 
                [:as lvalue]
                (recur (conj let-bindings lvalue parent-sym)
                       doseq-bindings
+                      loop-bindings
                       rest-bindings
                       struct-sym-map)
 
@@ -107,20 +128,38 @@
                (let [new-parent (gensym "literal-parent")]
                  (recur (conj let-bindings new-parent `(get ~parent-sym ~key))
                         doseq-bindings
+                        loop-bindings
                         rest-bindings
                         (assoc struct-sym-map id new-parent))))))))
 
-(defn wrap-bindings
-  [exp let-bindings doseq-bindings]
-  (let [wrap-let
-        (if (not-empty let-bindings)
-          (fn [x] `(let ~let-bindings ~x))
-          identity)
-        wrap-doseq
-        (if (not-empty doseq-bindings)
-          (fn [x] `(doseq ~doseq-bindings ~x))
-          identity)]
-    (-> exp wrap-doseq wrap-let)))
+(defn wrap-let-bindings
+  [exp let-bindings]
+  (if (not-empty let-bindings)
+    `(let ~let-bindings ~exp)
+    exp))
+
+(defn wrap-doseq-bindings
+  [exp doseq-bindings]
+  (if (not-empty doseq-bindings)
+    `(doseq ~doseq-bindings ~exp)
+    exp))
+
+(defn wrap-loop-bindings
+  [exp {:keys [part-size elem-syms vec-sym]}]
+  (if-not elem-syms
+    exp
+    (let [index-sym (gensym "i")
+          bindings (->> elem-syms
+                        (map-indexed
+                         (fn [i elem-sym]
+                           [elem-sym `(get ~vec-sym (+ ~index-sym ~i))]))
+                        (reduce into []))]
+      `(let [size# (count ~vec-sym)]
+         (loop [~index-sym 0]
+           (when (< ~index-sym size#)
+             (let ~bindings
+               ~exp
+               (recur (+ ~index-sym ~part-size)))))))))
 
 (defn compile
   [domain range where]
@@ -139,12 +178,15 @@
              (if-not domain
                modifier
                (let [{:keys [let-bindings doseq-bindings
-                             struct-sym-map]}
+                             loop-bindings struct-sym-map]}
                      (gen-bindings bindings struct-sym-map)]
 
                  (-> (go child struct-sym-map)
-                     (wrap-where-clauses where)
-                     (wrap-bindings let-bindings doseq-bindings)))))]
+                     (wrap-loop-bindings loop-bindings)
+                     (wrap-doseq-bindings doseq-bindings)
+                     (wrap-let-bindings let-bindings)
+                     (wrap-where-clauses where)))))]
+
 
       `(fn [~structure-sym]
          (let [~result-sym (transient ~empty-result)]
