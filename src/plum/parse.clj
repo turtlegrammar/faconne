@@ -28,48 +28,49 @@
     (persistent! syms)))
 
 (defn parse-domain
-  "[{:bind {:type (:destructure | :as | :literal)
-           :against (:vector | :map | :set | :leaf)
-           :lvalue Symbol
-           :key ClojureExp (only if (:type == :literal))
-           }
+  "[{:bind {:type ([:map lvalue]          |
+                   [:set]                 |
+                   [:vector num_children] |
+                   [:literal key]         |
+                   [:as lvalue]           |
+                   [:leaf lvalue])}
   :env  #{x | x is defined in this binding or in parent bindings}
   :children [parsed domains]}]"
   [dom]
   (letfn [(go [dom parent-env]
               (cond (symbol? dom)
-                    [{:bind {:type :destructure, :against :leaf, :lvalue dom}
+                    [{:bind {:type [:leaf dom]}
                       :env (conj parent-env dom)
                       :children nil}]
 
                     (or (vector? dom))
-                    [{:bind {:type :destructure, :against :vector, :lvalue nil}
-                      :env parent-env
-                      :children (mapcat #(go % parent-env) dom)}]
+                    (let [children (mapcat #(go % parent-env) dom)]
+                      [{:bind {:type [:vector (count children)]}
+                        :env parent-env
+                        :children children}])
 
                     (set? dom)
                     (if (> (count dom) 1)
                       (throw (Exception. "Sets in the domain can have only one element."))
-                      [{:bind {:type :destructure, :against :set, :lvalue nil}
+                      [{:bind {:type [:set]}
                         :env parent-env
                         :children (mapcat #(go % parent-env) dom)}])
 
                     (map? dom)
                     (for [[k v] dom]
                       (cond (#{:keys :strs :syms} k)
-                            {:bind {:type :destructure, :against :leaf,
-                                    :lvalue {k v}}
+                            {:bind {:type [:leaf {k v}]}
                              :env (set/union parent-env (symbols v))
                              :children nil}
 
                             (= :as k)
-                            {:bind {:type :as, :against :leaf, :lvalue v}
+                            {:bind {:type [:as v]}
                              :env (conj parent-env v)
                              :children nil}
 
                             (or (map? k) (vector? k) (symbol? k))
                             (let [new-env (set/union parent-env (symbols k))]
-                              {:bind {:type :destructure, :against :map, :lvalue k}
+                              {:bind {:type [:map k]}
                                :env new-env
                                :children (go v new-env)})
 
@@ -77,14 +78,14 @@
                             (let [[h t] k
                                   new-env (conj parent-env t)]
                               (if (= h :literal)
-                                {:bind {:type :literal, :against :map, :key t}
+                                {:bind {:type [:literal t]}
                                  :env new-env
                                  :children (go v new-env)}
                                 (throw (Exception. (str "Unsupported binding type: " h ". "
                                                         "Did you mean `:literal`?")))))
 
                             (or (keyword? k) (string? k))
-                            {:bind {:type :literal, :against :map, :key k}
+                            {:bind {:type [:literal k]}
                              :env parent-env
                              :children (go v parent-env)}))))]
     (go dom #{})))

@@ -30,32 +30,29 @@
 
 (deftest map->map
   (let [m {:a {:b 2 :c 5} :c {:b 3 :e 1}}]
-    (is (= (p/transform {k1 {k2 v}}
-                        {k2 {k1 v}}
-                        m)
+    (is (= (p/transform m
+                        {k1 {k2 v}}
+                        {k2 {k1 v}})
            {:b {:a 2
                 :c 3}
             :c {:a 5}
             :e {:c 1}}))))
 
 (deftest set-in-map
-  (is (= (p/transform {prof {_ [student]}}
-                      {(:name student) #{prof}}
-                      profs->classes->students)
+  (is (= (p/transform profs->classes->students
+                      {prof {_ [student]}}
+                      {(:name student) #{prof}})
          students->profs))
 
-  (is (= (p/transform {prof {_ [{:keys [name]}]}}
-                      {name #{prof}}
-                      profs->classes->students)
+  (is (= (p/transform profs->classes->students
+                      {prof {_ [{:keys [name]}]}}
+                      {name #{prof}})
          students->profs))
 
-  (is (= (p/transform {prof {_ [{name :name, grade :grade}]}}
-                      {name #{prof}}
-                      profs->classes->students)
-         students->profs))
-
-  (is (thrown? Exception (p/compile '{prof {_ [{name :name}]}}
-                                    '{name #{prof}}))))
+  (is (= (p/transform profs->classes->students
+                      {prof {_ [{:name name}]}}
+                      {name #{prof}})
+         students->profs)))
 
 
 ;;    ;; Map from students to set of classes they have an A in

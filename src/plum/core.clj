@@ -1,5 +1,6 @@
 (ns plum.core
-  (:require [plum.compile :refer [compile]]))
+  (:require [plum.compile :refer [compile]]
+            [clojure.pprint :refer [pprint]]))
 
 (defmacro transformer
   [domain range & options]
@@ -14,4 +15,4 @@
 (defmacro print-generated-fn
   [domain range & options]
   (let [where (:where (apply hash-map options))]
-    (clojure.pprint/pprint (compile domain range where))))
+    (pprint (compile domain range where))))

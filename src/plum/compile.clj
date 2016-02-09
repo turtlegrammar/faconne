@@ -44,7 +44,8 @@
     :map `(assoc-in! ~result-sym ~path ~leaf)
 
     :seq-in-map `(update-in! ~result-sym ~path
-                             (fn [x#] ((fnil conj! (transient ~empty-leaf-cont)))))))
+                             (fn [x#] ((fnil conj! (transient ~empty-leaf-cont))
+                                       x# ~leaf)))))
 
 (defn wrap-where-clauses
   [exp clauses]
@@ -65,37 +66,44 @@
       {:let-bindings let-bindings
        :doseq-bindings doseq-bindings
        :struct-sym-map struct-sym-map}
-      (let [{:keys [type against lvalue parent-id id key]} binding
+      (let [{:keys [type parent-id id]} binding
             parent-sym (struct-sym-map parent-id)]
-        (match [type against]
+        (match type
 
-               [:destructure :map]
+               [:map lvalue]
                (let [new-parent (gensym "map-val-parent")]
                  (recur let-bindings
                         (conj doseq-bindings [lvalue new-parent] parent-sym)
                         rest-bindings
                         (assoc struct-sym-map id new-parent)))
 
-               [:destructure :leaf]
+               [:leaf lvalue]
                (recur (conj let-bindings lvalue parent-sym)
                       doseq-bindings
                       rest-bindings
                       struct-sym-map)
 
-               [:destructure _]
-               (let [new-parent (gensym "vec-parent")]
+               [:set]
+               (let [new-parent (gensym "set-parent")]
                  (recur let-bindings
                         (conj doseq-bindings new-parent parent-sym)
                         rest-bindings
                         (assoc struct-sym-map id new-parent)))
 
-               [:as _]
+               [:vector _]
+               (let [new-parent (gensym "set-parent")]
+                 (recur let-bindings
+                        (conj doseq-bindings new-parent parent-sym)
+                        rest-bindings
+                        (assoc struct-sym-map id new-parent)))
+
+               [:as lvalue]
                (recur (conj let-bindings lvalue parent-sym)
                       doseq-bindings
                       rest-bindings
                       struct-sym-map)
 
-               [:literal _]
+               [:literal key]
                (let [new-parent (gensym "literal-parent")]
                  (recur (conj let-bindings new-parent `(get ~parent-sym ~key))
                         doseq-bindings
