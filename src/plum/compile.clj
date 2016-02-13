@@ -27,25 +27,31 @@
     (update! m k f)
     (create-assoc! m k (update-in! (get m k) ks f))))
 
+(defmacro into!
+  [coll xs default]
+  `(do ~@(map-indexed (fn [i x] (if (> i 0)
+                                  `(conj! ~coll ~x)
+                                  `((fnil conj! ~default) ~coll ~x)))
+                      xs)))
+
 (defn deep-persistent!
   [nest coll]
   (if (= nest 0)
     (persistent! coll)
     (->> (persistent! coll)
-         (map (fn [[k v]] [k (deep-persistent! (dec nest) v)]))
+         (mapv (fn [[k v]] [k (deep-persistent! (dec nest) v)]))
          (into {}))))
 
 (defn modifier-clause
   [{:keys [path leaf type empty empty-leaf-cont]}
    result-sym]
   (case type
-    :seq `((fnil conj! (transient ~empty)) ~result-sym ~leaf)
+    :seq `(into! ~result-sym ~leaf ~empty)
 
     :map `(assoc-in! ~result-sym ~path ~leaf)
 
     :seq-in-map `(update-in! ~result-sym ~path
-                             (fn [x#] ((fnil conj! (transient ~empty-leaf-cont))
-                                       x# ~leaf)))))
+                             (fn [x#] (into! x# ~leaf ~empty-leaf-cont)))))
 
 (defn wrap-where-clauses
   [exp clauses]
@@ -76,6 +82,14 @@
                (let [new-parent (gensym "map-val-parent")]
                  (recur let-bindings
                         (conj doseq-bindings [lvalue new-parent] parent-sym)
+                        loop-bindings
+                        rest-bindings
+                        (assoc struct-sym-map id new-parent)))
+
+               [:proxy]
+               (let [new-parent (gensym "proxy-parent")]
+                 (recur (conj let-bindings new-parent parent-sym)
+                        doseq-bindings
                         loop-bindings
                         rest-bindings
                         (assoc struct-sym-map id new-parent)))
@@ -182,11 +196,10 @@
                      (gen-bindings bindings struct-sym-map)]
 
                  (-> (go child struct-sym-map)
+                     (wrap-where-clauses where)
                      (wrap-loop-bindings loop-bindings)
-                     (wrap-doseq-bindings doseq-bindings)
                      (wrap-let-bindings let-bindings)
-                     (wrap-where-clauses where)))))]
-
+                     (wrap-doseq-bindings doseq-bindings)))))]
 
       `(fn [~structure-sym]
          (let [~result-sym (transient ~empty-result)]

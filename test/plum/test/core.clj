@@ -54,95 +54,126 @@
                       {name #{prof}})
          students->profs)))
 
+(deftest simple-vector-partioning
+  (is (-> [1 2 3 4 5 6]
+          (p/transform [a _] [a])
+          (= [1 3 5])))
+  (is (-> [1 2 3 4 5 6]
+          (p/transform [a _ c] [a c])
+          (= [1 3 4 6])))
+  (is (-> [1 2 3 4 5 6]
+          (p/transform [_ b _] [b])
+          (= [2 5])))
+  (is (-> [1 2 3 4 5]
+          (p/transform [_ b] [b] :where [b])
+          (= [2 4])))
+  (is (-> [[1 2] [3 4] [5 6]]
+          (p/transform [[a _]] [a])
+          (= [1 3 5])))
+  (is (-> [[1 2] [3 4] [5 6]]
+          (p/transform [[_ b]] [b])
+          (= [2 4 6])))
+  (is (-> [[1 2] [3 4]]
+          (p/transform [[a]] [a])
+          (= [1 2 3 4]))))
 
-;;    ;; Map from students to set of classes they have an A in
-;;    (is (= (p/collect {prof {class [{:let {student :name
-;;                                           grade :grade}}]}}
-;;                      {student (if (= grade "A")
-;;                                 #{class}
-;;                                 #{})}
-;;                      m)
-;;           {"John" #{"AI"}
-;;            "Ben Bitdiddle" #{"Compilers"}
-;;            "Eva Lu Ator" #{}
-;;            "Sally" #{}
-;;            "Tom" #{}}))
-;;
-;;    (is (= (p/collect {prof {:extract (p/key= "Compilers")
-;;                             class [{:let {student :name
-;;                                           grade :grade}
-;;                                     :where (= grade "A")}]}}
-;;                      ;; all students who have an A in Compilers
-;;                      #{student}
-;;                      m)
-;;           #{"Ben Bitdiddle"}))
-;;
-;;    ;; swap the order of professor and class
-;;    (let [class->prof {"AI"
-;;                       {"Sussman"
-;;                        [{:name "John"
-;;                          :grade "A"}
-;;                         {:name "Sally"
-;;                          :grade "B"}]}
-;;                       "Compilers"
-;;                       {"Sussman"
-;;                        [{:name "Tom"
-;;                          :grade "B"}
-;;                         {:name "John"
-;;                          :grade "B"}]
-;;                        "Abelson"
-;;                        [{:name "Eva Lu Ator"
-;;                          :grade "B"}
-;;                         {:name "Ben Bitdiddle"
-;;                          :grade "A"}]}
-;;                       "Machine Learning"
-;;                       {"Abelson"
-;;                        [{:name "Sally"
-;;                          :grade "C"}
-;;                         {:name "Tom"
-;;                          :grade "B-"}]}}
-;;          swap-key-order (p/collector {k1 {k2 v}} {k2 {k1 v}})]
-;;      (is (= (swap-key-order m) class->prof))
-;;      (is (= (swap-key-order (swap-key-order m)) m)))))
-;;
-;;(deftest cumbersome-collections
-;;  (let [m [{:class "Compilers"
-;;            :professor "Sussman"
-;;            :room "West 707"
-;;            :students ["Eva Lu Ator" "Ben Bitdiddle"]}
-;;           {:class "AI"
-;;            :professor "Abelson"
-;;            :room "East 103"
-;;            :students ["Eva Lu Ator" "Sally"]}]]
-;;    ;; student -> rooms they have class in
-;;    (is (= (p/collect [{:let {room :room}
-;;                        :extract (p/key= :students)
-;;                        _ [student]}]
-;;                      {student #{room}}
-;;                      m)
-;;           {"Eva Lu Ator" #{"West 707" "East 103"}
-;;            "Ben Bitdiddle" #{"West 707"}
-;;            "Sally" #{"East 103"}}))))
-;;
-;;(deftest vectors->maps
-;;  (let [pieces [{:composer "Bartok"
-;;                 :title "Piano Concerto 1"
-;;                 :year 1926}
-;;                {:composer "Bartok"
-;;                 :title "String Quartet 2"
-;;                 :year 1917}
-;;                {:composer "Ligeti"
-;;                 :title "Etude 1"
-;;                 :year 1985}]]
-;;    (is (= (p/collect [{:let {composer :composer
-;;                              :rest rest}}]
-;;                      {composer #{rest}}
-;;                      pieces)
-;;           {"Bartok"
-;;            #{{:title "Piano Concerto 1"
-;;               :year 1926}
-;;              {:title "String Quartet 2"
-;;               :year 1917}}
-;;            "Ligeti"
-;;            #{{:title "Etude 1"
-;;               :year 1985}}}))))
+(deftest complex-vector-partitioning
+  (is (-> {{:k :a} [1 2 3 4 5 6]
+           {:k :b} [7 8 9 10 11 12]}
+          (p/transform {{:keys [k]} [a _ c]} {(+ a c) k}
+                       :where [(even? a) (even? c)])
+          (= {10 :a, 22 :b})))
+
+  (is (-> [[1 2 3] [4 5 98 7] [5 6 8 17] [13 14 15]]
+          (p/transform [[_ b] _] [b]
+                       :where [b (even? b)])
+          (= [2 6])))
+
+  (is (-> [[1 2 3] [4 5 98 7] [5 6 8 17] [13 14 15]]
+          (p/transform [_ [a _]] [a]
+                       :where [a (even? a)])
+          (= [4 98])))
+
+  (is (-> [[1 2 3] [4 5 98 7] [5 6 8 17] [13 14 15]]
+          (p/transform [_ [_ b]] [b]
+                       :where [b (even? b)])
+          (= [14])))
+
+  (is (-> [[1 2 3] [4 5 98 7] [5 6 8 17] [13 14 15]]
+          (p/transform [[a _] _] [a]
+                       :where [a (even? a)])
+          (= [8]))))
+
+(deftest key-literals
+  (let [data [{:num 6
+               :coll [1 2]}
+              {:num 7
+               :coll [-94 -100]}
+              {:num 8
+               :coll [3 4]}]]
+    (is (-> data
+            (p/transform [{:num n :coll [x]}] #{x}
+                         :where [(even? n)])
+            (= #{1 2 3 4})))
+    (is (-> data
+            (p/transform [{:keys [num] :coll [x]}] #{x}
+                         :where [(odd? num)])
+            (= #{-94 -100}))))
+
+  (let [pieces
+        [{:composer "Bartók" :title "Piano Concerto 1" :year 1926}
+         {:composer "Bartók" :title "String Quartet 2" :year 1917}
+         {:composer "Ligeti" :title "Etude 1" :year 1985}
+         {:composer "Ligeti" :title "Mysteries of the Macabre" :year 1992}]
+
+        by-composer-and-year
+        {"Bartók"
+         {1926 [{:composer "Bartók", :title "Piano Concerto 1", :year 1926}],
+          1917 [{:composer "Bartók", :title "String Quartet 2", :year 1917}]},
+         "Ligeti"
+         {1985 [{:composer "Ligeti", :title "Etude 1", :year 1985}],
+          1992 [{:composer "Ligeti", :title "Mysteries of the Macabre", :year 1992}]}}]
+    (is (-> pieces
+            (p/transform [{:keys [composer year] :as piece}] {composer {year [piece]}})
+            (= by-composer-and-year)))
+    (is (-> pieces
+            (p/transform [{:keys [composer] :year y :as piece}] {composer {y [piece]}})
+            (= by-composer-and-year)))
+    (is (-> pieces
+            (p/transform [{:composer c :year y :as piece}] {c {y [piece]}})
+            (= by-composer-and-year))))
+
+  (let [data [{:a 1 "b" 2}, {:a 2 "b" 3},
+              {:a 3 "b" 5}, {:a 4 "b" 4}]
+        result {1 2 2 3 4 4 3 5}]
+    (is (-> data
+            (p/transform [{:a a "b" b}] {a b})
+            (= result)))
+    (is (-> data
+            (p/transform [{:keys [a] "b" b}] {a b})
+            (= result)))
+    (is (-> data
+            (p/transform [{:strs [b] :a a}] {a b})
+            (= result))))
+
+  (let [data [{:keys 1 :strs 2 :syms 3 :as 4}
+              {:keys 5 :strs 6 :syms 7 :as 8}]]
+    (is (-> data
+            (p/transform [{(:literal :keys) a
+                           (:literal :strs) b
+                           (:literal :syms) c
+                           (:literal :as)   d}]
+                         #{(+ a b c d)})
+            (= #{10 26}))))
+
+  (is (-> {[101 23] 4, [98] 2}
+          (p/transform {(:literal [101 23]) x} #{x})
+          (= #{4}))))
+
+(deftest variable-key-literal)
+
+(deftest where)
+
+(deftest key-destructuring)
+
+(deftest combinations)

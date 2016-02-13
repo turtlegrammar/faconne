@@ -30,6 +30,7 @@
 
 (defn parse-domain
   "[{:bind {:type ([:map lvalue]          |
+                   [:proxy]               |
                    [:set]                 |
                    [:vector num-children] |
                    [:literal key]         |
@@ -45,17 +46,24 @@
                       :children nil}]
 
                     (or (vector? dom))
-                    (let [children (mapcat #(go % parent-env) dom)]
+                    (let [children (map #(go % parent-env) dom)
+                          proxied-children (mapcat (fn [c]
+                                                     (if (> (count c) 1)
+                                                       [{:bind {:type [:proxy]}
+                                                          :env parent-env
+                                                          :children c}]
+                                                       c))
+                                                   children)]
                       [{:bind {:type [:vector (count children)]}
                         :env parent-env
-                        :children children}])
+                        :children proxied-children}])
 
                     (set? dom)
                     (if (> (count dom) 1)
                       (throw (Exception. "Sets in the domain can have only one element."))
                       [{:bind {:type [:set]}
                         :env parent-env
-                        :children (mapcat #(go % parent-env) dom)}])
+                        :children (go (first dom) parent-env)}])
 
                     (map? dom)
                     (for [[k v] dom]
@@ -183,11 +191,13 @@
 
             (or (vector? structure) (set? structure))
             {:path path
-             :leaf (first structure)
+             :leaf structure
              :type (if (= type :map)
                      :seq-in-map
                      :seq)
-             :empty-leaf-cont (if (vector? structure) [] #{})
+             :empty-leaf-cont (if (vector? structure)
+                                `(transient  [])
+                                `(transient #{}))
              :empty empty-result
              :nest nest}))))
 

@@ -13,10 +13,10 @@
 (swap-key-order {:a {:z 1 :y 2} :y {:a 6 :z 9}})
 ;; => {:z {:a 1, :y 9}, :y {:a 2}, :a {:y 6}}
 
-;; flatten can be written from as its type signature: [[a]] -> [a]
-(def flatten (p/transformer [[a]] [a]))
+;; concat can be written as its type signature: [[a]] -> [a]
+(def concat' (p/transformer [[a]] [a]))
 
-(flatten [[1 2] '(3 4) [5 6]])
+(concat' [[1 2] '(3 4) [5 6]])
 ;; => [1 2 3 4 5 6]
 
 ;;;;;;;;;;;;;;;;;;;;;;;;
