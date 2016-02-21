@@ -22,21 +22,23 @@
 ;;           | (:literal ClojureExp) Domain
 ;;
 
-(defn symbols
+(defn- symbols
+  "Get a set of all the symbols used in a data structure."
   [structure]
   (let [syms (transient #{})]
     (walk/postwalk #(if (symbol? %) (conj! syms %)) structure)
     (persistent! syms)))
 
-(defn parse-domain
-  "[{:bind {:type ([:map lvalue]          |
+(defn- parse-domain
+  "Returns:
+  [{:bind {:type  ([:map lvalue]          |
                    [:proxy]               |
                    [:set]                 |
                    [:vector num-children] |
                    [:literal key]         |
                    [:as lvalue]           |
                    [:leaf lvalue])}
-  :env  #{x | x is defined in this binding or in parent bindings}
+  :env  #{x | sym x is defined in this binding or in parent bindings}
   :children [parsed domains]}]"
   [dom]
   (letfn [(go [dom parent-env]
@@ -45,6 +47,15 @@
                       :env (conj parent-env dom)
                       :children nil}]
 
+                    ;; Parsing vectors is tricky because for a form like
+                    ;; [s1 ... sn], the children of each si must be linked to si
+                    ;; so that their constituents can be bound against si.
+                    ;; For example, in [[a] [b]], each b must be bound against the
+                    ;; odd-indexed elements of the outer vector.
+                    ;; If we just (mapcat go children), then this information is lost.
+                    ;; So, each element in the vector is given a type of :proxy,
+                    ;; which is just a way to preserve the separate 'bloodlines'
+                    ;; of each elements' children.
                     (or (vector? dom))
                     (let [children (map #(go % parent-env) dom)
                           proxied-children (mapcat (fn [c]
@@ -68,9 +79,16 @@
                     (map? dom)
                     (for [[k v] dom]
                       (cond (#{:keys :strs :syms} k)
-                            {:bind {:type [:leaf {k v}]}
-                             :env (set/union parent-env (symbols v))
-                             :children nil}
+                            (if-not (and (vector? v) (every? symbol? v))
+                              (throw (Exception. (str "The binding " {k v} " is expected to "
+                                                      "conform to Clojure's map destructuring "
+                                                      "syntax; the value must be a vector of "
+                                                      "symbols. If you want to treat the map "
+                                                      "as having " k " as a key, then use "
+                                                      {(:literal k) v})))
+                              {:bind {:type [:leaf {k v}]}
+                               :env (set/union parent-env (symbols v))
+                               :children nil})
 
                             (= :as k)
                             {:bind {:type [:as v]}
@@ -90,8 +108,8 @@
                                 {:bind {:type [:literal t]}
                                  :env new-env
                                  :children (go v new-env)}
-                                (throw (Exception. (str "Unsupported binding type: " h ". "
-                                                        "Did you mean `:literal`?")))))
+                                (throw (Exception. (str "Unsupported binding type: " k ". "
+                                                        "Did you mean " {(:literal k) v})))))
 
                             (or (keyword? k) (string? k))
                             {:bind {:type [:literal k]}
@@ -99,77 +117,85 @@
                              :children (go v parent-env)}))))]
     (go dom #{})))
 
-(defn assign-bind-ids
+(defn- assign-bind-ids
+  "parse-domain returns an unwieldy multiway tree: each domain 'frame' has
+  exactly one binding and n (variable) children. It would be easier to work with if each frame
+  had instead n bindings and 1 child. However, each binding must know its parent.
+  By assigning each binding an `:id` and `:parent-id`, we can later squash all of them into
+  a simple linear list (see `squash`)."
   [domains]
   (let [id (atom -1)
         get-id #(do (swap! id inc) @id)
         first-id (get-id)]
-    (letfn [(go [domain parent-id]
+    (letfn [(update-domain [domain parent-id this-id new-children]
+              (-> domain
+                  (assoc-in [:bind :parent-id] parent-id)
+                  (assoc-in [:bind :id] this-id)
+                  (assoc :children new-children)))
+            (go [domain parent-id]
                 (if-let [type (-> domain :bind :type)]
                   (match type
+                         ;; Elements of the vector must have distinct parent ids.
                          [:vector num-children]
-                         (let [these-ids (for [_ (range num-children)] (get-id))
-                               children-par-id-pairs (map vector (:children domain) these-ids)
-                               assigned-children (for [[child par-id] children-par-id-pairs]
-                                                   (go child par-id))]
-                           (-> domain
-                               (assoc-in [:bind :parent-id] parent-id)
-                               (assoc-in [:bind :id] these-ids)
-                               (assoc :children assigned-children)))
+                         (let [these-ids (mapv (fn [_] (get-id)) (range num-children))
+                               assigned-children (->> these-ids
+                                                      (mapv vector (:children domain))
+                                                      (mapv (partial apply go)))]
+                           (update-domain domain parent-id these-ids assigned-children))
 
                          :else
-                         (let [this-id (get-id)]
-                           (-> domain
-                               (assoc-in [:bind :parent-id] parent-id)
-                               (assoc-in [:bind :id] this-id)
-                               (update :children (partial mapv #(go % this-id))))))))]
+                         (let [this-id (get-id)
+                               new-children (mapv #(go % this-id)
+                                                  (:children domain))]
+                           (update-domain domain parent-id this-id new-children)))))]
+
       (mapv #(go % first-id) domains))))
 
-(defn squash
+(defn- squash
+  "Squash a vector of binding frames - each having exactly one binding
+  and multiple children - into a single binding frame having multiple
+  bindings and exactly one child."
   [domains]
   (letfn [(go [domains parent-env]
               (if-not (empty? domains)
                 (let [bindings   (mapv :bind domains)
                       joined-env (reduce set/union parent-env
-                                         (map :env domains))]
+                                         (mapv :env domains))]
                   {:bindings bindings
                    :env joined-env
                    :child (go (mapcat :children domains) joined-env)})))]
     (go domains #{})))
 
-(defn maximal-environment
-  [parsed-domain]
-  (loop [{:keys [child env]} parsed-domain]
-    (if-not child env (recur child))))
+(defn- maximal-environment
+  "Return the environment containing every symbol used in the domain."
+  [{:keys [child env]}]
+  (if-not child env (recur child)))
 
-(defn clause-environments
+(defn- clause-environments
   [clauses max-env]
-  (map (fn [clause] {:req-env (set/intersection max-env (symbols clause))
-                     :clause clause})
-       clauses))
+  (for [clause clauses]
+    {:req-env (set/intersection max-env (symbols clause))
+     :clause clause}))
 
-(defn clauses-in-environment
+(defn- clauses-in-environment
   [clauses env]
   (group-by #(set/subset? (:req-env %) env) clauses))
 
-(defn add-where-clauses-to-parsed-domain
-  [pdomain clauses]
-  (let [max-env (maximal-environment pdomain)
+(defn- add-where-clauses
+  "Associate where clauses with the highest possible frame in the domain."
+  [domain clauses]
+  (let [max-env (maximal-environment domain)
         clauses-with-envs (clause-environments clauses max-env)]
-    (letfn [(go [eclauses pdomain]
-                (let [{:keys [env child]} pdomain
+    (letfn [(go [eclauses {:keys [env] :as domain}]
+                (if domain
+                  (let [{in-env true out-env false}
+                        (clauses-in-environment eclauses env)]
+                    (-> domain
+                        (assoc :where (mapv :clause in-env))
+                        (update :child (partial go out-env))))))]
+      (go clauses-with-envs domain))))
 
-                      {in-env true out-env false}
-                      (clauses-in-environment eclauses env)
-
-                      updated-domain (assoc pdomain :where
-                                            (mapv :clause in-env))]
-                  (if child
-                    (update updated-domain :child (partial go out-env))
-                    updated-domain)))]
-      (go clauses-with-envs pdomain))))
-
-(defn parse-range
+(defn- parse-range
   "Unbelievably ugly. Really need to change this."
   [structure]
   (let [empty-result (cond (map? structure) {}
@@ -201,7 +227,7 @@
              :empty empty-result
              :nest nest}))))
 
-(def analyze-domain
+(def ^:private analyze-domain
   "Choose important-sounding words for important functions."
   (comp squash assign-bind-ids parse-domain))
 
@@ -210,7 +236,7 @@
   (let [pdomain (analyze-domain domain)
         prange (parse-range range)
 
-        where-domain (add-where-clauses-to-parsed-domain
+        where-domain (add-where-clauses
                       pdomain where)]
     {:domain where-domain
      :range prange}))
