@@ -1,5 +1,5 @@
-(ns gepopo.compile
-  (:require [gepopo.parse :as parse]
+(ns faconne.compile
+  (:require [faconne.parse :as parse]
             [clojure.core.match :refer [match]]))
 
 (defn create-assoc!

@@ -1,9 +1,10 @@
-(ns gepopo.core
-  (:require [gepopo.compile :refer [genfn]]
+(ns faconne.core
+  (:require [faconne.compile :refer [genfn]]
             [clojure.pprint :refer [pprint]]))
 
 (defmacro transformer
   [domain range & options]
+  ;; throw error on unsupported keywords
   (let [where (:where (apply hash-map options))]
     (genfn domain range where)))
 
