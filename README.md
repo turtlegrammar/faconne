@@ -1,7 +1,7 @@
 This is demo.clj.
 ```clojure
 (ns demo
-  (:require [plum.core :as p]))
+  (:require [gepopo.core :as p]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Overview
@@ -36,9 +36,9 @@ This is demo.clj.
                                          {(+ roll1 roll2) #{(clojure.string/upper-case name)}}))
 
 (group-by-sum-of-dice {{:id "A75" :name "Slothrop"}         [3 5]
-                       {:id "B82" :name "Sugar Plum Fairy"} [2 6]
+                       {:id "B82" :name "Sugar Gepopo Fairy"} [2 6]
                        {:id "C92" :name "Tom"}              [1 1]})
-;; => {8 #{"SLOTHROP" "SUGAR PLUM FAIRY"}, 2 #{"TOM"}}
+;; => {8 #{"SLOTHROP" "SUGAR GEPOPO FAIRY"}, 2 #{"TOM"}}
 
 
 ;; This takes a vector of records -- like one you'd get from JDBC --
@@ -82,7 +82,7 @@ This is demo.clj.
 (filter' #(< % 5) [3 4 5 6]) ;; => [3 4]
 
 
-;; plum is intelligent enough to check if predicates are true
+;; gepopo is intelligent enough to check if predicates are true
 ;; as soon as all symbols used in them are defined. For example, this
 ;; terminates instantly:
 (p/transform {:infinite (range)}

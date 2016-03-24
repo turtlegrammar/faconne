@@ -1,5 +1,5 @@
-(ns plum.core
-  (:require [plum.compile :refer [genfn]]
+(ns gepopo.core
+  (:require [gepopo.compile :refer [genfn]]
             [clojure.pprint :refer [pprint]]))
 
 (defmacro transformer

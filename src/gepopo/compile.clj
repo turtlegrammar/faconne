@@ -1,5 +1,5 @@
-(ns plum.compile
-  (:require [plum.parse :as parse]
+(ns gepopo.compile
+  (:require [gepopo.parse :as parse]
             [clojure.core.match :refer [match]]))
 
 (defn create-assoc!
@@ -98,7 +98,7 @@
   [bindings id->sym]
   (->> bindings
        (map #(gen-binding % id->sym))
-       (apply (partial merge-with into))))
+       (apply merge-with into)))
 
 (defn wrap-where-clauses
   [exp clauses]

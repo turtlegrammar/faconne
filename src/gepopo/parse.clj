@@ -1,4 +1,4 @@
-(ns plum.parse
+(ns gepopo.parse
   (:require [clojure.set :as set]
             [clojure.walk :as walk]
             [clojure.core.match :refer [match]]))
