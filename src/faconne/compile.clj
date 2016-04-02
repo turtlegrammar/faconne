@@ -161,11 +161,10 @@
                  (-> (go child id->sym)
                      (wrap-where-clauses where)
                      (wrap-loop-bindings loop-bindings)
-                     (wrap-let-bindings let-bindings)
-                     (wrap-doseq-bindings doseq-bindings)))))]
+                     (wrap-doseq-bindings doseq-bindings)
+                     (wrap-let-bindings let-bindings)))))]
 
       `(fn [~structure-sym]
          (let [~result-sym (transient ~empty-result)]
-           ;; need to remove hard-coded 0
-           ~(go pdomain {0 structure-sym})
+           ~(go pdomain {parse/first-bind-id structure-sym})
            (deep-persistent! ~nest ~result-sym))))))

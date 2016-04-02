@@ -85,15 +85,20 @@
                                                       "syntax; the value must be a vector of "
                                                       "symbols. If you want to treat the map "
                                                       "as having " k " as a key, then use "
-                                                      {(:literal k) v})))
+                                                      {'(:literal k) v})))
                               {:bind {:type [:leaf {k v}]}
                                :env (set/union parent-env (symbols v))
                                :children nil})
 
                             (= :as k)
-                            {:bind {:type [:as v]}
-                             :env (conj parent-env v)
-                             :children nil}
+                            (if-not (symbol? v)
+                              (throw (Exception. (str "The binding {:as v} means that the "
+                                                      "entire map should be bound to v. "
+                                                      "If you mean to use `:as` as a key literal, "
+                                                      "then use: " {'(:literal :as) v} ".")))
+                              {:bind {:type [:as v]}
+                               :env (conj parent-env v)
+                               :children nil})
 
                             (or (map? k) (vector? k) (symbol? k))
                             (let [new-env (set/union parent-env (symbols k))]
@@ -109,7 +114,7 @@
                                  :env new-env
                                  :children (go v new-env)}
                                 (throw (Exception. (str "Unsupported binding type: " k ". "
-                                                        "Did you mean " {(:literal k) v})))))
+                                                        "You probably meant: " {'(:literal k) v})))))
 
                             (or (keyword? k) (string? k))
                             {:bind {:type [:literal k]}
@@ -150,6 +155,8 @@
                            (update-domain domain parent-id this-id new-children)))))]
 
       (mapv #(go % first-id) domains))))
+
+(def first-bind-id 0)
 
 (defn- squash
   "Squash a vector of binding frames - each having exactly one binding
@@ -198,13 +205,16 @@
 (defn- parse-range
   "Unbelievably ugly. Really need to change this."
   [structure]
-  (let [empty-result (cond (map? structure) {}
+  (let [bad-range (str "The range must be a map, set, or "
+                       "vector. You provided " structure ".")
+        empty-result (cond (map? structure) {}
                            (set? structure) #{}
-                           (vector? structure) [])]
-    (loop [structure structure
-           path []
-           type nil
-           empty nil
+                           (vector? structure) []
+                           :else (throw (Exception. bad-range)))]
+    (loop [structure structure ;; struct to recurse on
+           path [] ;; under what keys should the leaf be inserted?
+           type nil ;; (:seq | :seq-in-map | :map)
+           empty nil ;; what value is the empty range?
            nest 0]
       (cond (not (coll? structure))
             {:path path :type type
@@ -227,6 +237,12 @@
              :empty empty-result
              :nest nest}))))
 
+(defn- validate-where-clauses
+  [clauses]
+  (if-not (or (nil? clauses) (vector? clauses))
+    (throw (Exception. "The arguments to `:where` should be a vector of Clojure expressions."))
+    clauses))
+
 (def ^:private analyze-domain
   "Choose important-sounding words for important functions."
   (comp squash assign-bind-ids parse-domain))
@@ -236,7 +252,8 @@
   (let [pdomain (analyze-domain domain)
         prange (parse-range range)
 
-        where-domain (add-where-clauses
-                      pdomain where)]
+        where-domain (->> where
+                          validate-where-clauses
+                          (add-where-clauses pdomain))]
     {:domain where-domain
      :range prange}))

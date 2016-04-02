@@ -170,10 +170,73 @@
           (f/transform {(:literal [101 23]) x} #{x})
           (= #{4}))))
 
-(deftest variable-key-literal)
+(deftest variable-key-literal
+  (let [merge-key-vals (fn [m k1 k2]
+                         (f/transform m
+                                      {(:literal k1) [v1]
+                                       (:literal k2) [v2]}
+                                      #{v1 v2}))]
+    (is (-> {:a [1 2 3], :b [3 4 5], :c [5 6 7]}
+            (merge-key-vals :a :b)
+            (= #{1 2 3 4 5})))))
 
-(deftest where)
 
-(deftest key-destructuring)
+(deftest where
+  (is (= {1 2, 3 4}
+         (f/transform {1 (range), 2 [1, 2], 3 (range), 4 [3, 4]}
+                      {k [n]} {n k}
+                      :where [(even? k) (odd? n)]))))
 
-(deftest combinations)
+(deftest key-destructuring
+  (let [pair-map {[1 2] 3 [4 5] 6}
+        map-map {{:a 1 :b 2} 3 {:a 4 :b 5} 6}]
+    (is (-> pair-map
+            (f/transform {[n1 n2] v} #{(+ n1 n2 v)})
+            (= #{6 15})))
+    (is (-> map-map
+            (f/transform {{:keys [a b]} v} #{(+ a b v)})
+            (= #{6 15})))))
+
+(deftest combinations
+  (is (= #{#{:c :d} #{:e :a} #{:b :a}}
+         (f/transform {:a 7, :b 3, :c 5, :d 5, :e 3}
+                      {k v, k' v'}
+                      #{#{k k'}}
+                      :where [(not= k k') (= 10 (+ v v'))]))))
+
+
+(deftest higher-level-sanity-tests
+  (let [json [{:store-name "Tom's Records"
+               :location "1234 Main Street"
+               :stock [{:artist "Bartók"
+                        :title "String Quartets"
+                        :quantity 5}
+                       {:artist "Ligeti"
+                        :title "Violin Concerto"
+                        :quantity 1}]}
+              {:store-name "Roger's Records"
+               :location "789 Secondary Street"
+               :stock [{:artist "Ligeti"
+                        :title "Violin Concerto"
+                        :quantity 3}
+                       {:artist "Scriabin"
+                        :title "12 Etudes"
+                        :quantity 2}]}]
+
+        transform (f/transformer [{:store-name store
+                                   :location loc
+                                   :stock [{:keys [artist title quantity]}]}]
+                                 {artist {title [[(str store " @ " loc) quantity]]}})
+        result {"Bartók"
+                {"String Quartets"
+                 [["Tom's Records @ 1234 Main Street" 5]]},
+
+                "Ligeti"
+                {"Violin Concerto"
+                 [["Tom's Records @ 1234 Main Street" 1]
+                  ["Roger's Records @ 789 Secondary Street" 3]]},
+
+                "Scriabin"
+                {"12 Etudes"
+                 [["Roger's Records @ 789 Secondary Street" 2]]}}]
+    (is (= result (transform json)))))
