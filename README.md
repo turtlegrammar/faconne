@@ -7,11 +7,13 @@
 ```
 
 ## Overview/Motivation
-  `f/transformer` creates a function from a domain 'schema' -- a map/vector/set  of symbols -- and a range 'schema'.
+  Faconne is a small DSL with one purpose: to make changing the shape of data  as intuitive as possible. Faconne isn't for updating values in deeply nested  structures (like Specter), but for transforming a vector of maps whose values are vectors into  a map of sets, or some other transformation that's easy to specify visually --  `[{x [a]}] -> {x #{a}}` -- but tedious to code. This makes it especially suitable  for JSON related plumbing (example below).   Faconne is mainly one core function -- `f/transformer` -- which creates a function  from domain and range 'schemas',  which are just Clojure data structures  (vectors, sets, maps) with some extra destructuring syntax.  Here is how you can swap the order of keys in a nested map:
 ```clj
 (def swap-key-order (f/transformer {k1 {k2 v}} {k2 {k1 v}}))
 (swap-key-order {:a {:z 1 :y 2} :y {:a 6 :z 9}})
 ;; => {:z {:a 1, :y 9}, :y {:a 2}, :a {:y 6}}
+;; this can also be written using `f/transform`, which is a trival wrapper around `f/transformer`:
+(f/transform {:a {:z 1 :y 2}} {k1 {k2 v}} {k2 {k1 v}})
 ```
   concat can be written as its type signature: `[[a]] -> [a]`
 ```clj
@@ -30,7 +32,7 @@
              {:artist "Ligeti"
               :title "Violin Concerto"
               :quantity 6}]}
-   {:store-name "Roger's Records"
+   {:store-name "Sarah's Records"
     :location "789 Secondary Street"
     :stock [{:artist "Ligeti"
              :title "Violin Concerto"
@@ -42,24 +44,25 @@
              :title "12 Etudes"
              :quantity 4}]}])
 ```
-  But we're going to be querying the data by artist and title mostly, so  what we really want is a map from artists to titles to  the stores it's available at and in what quantities.  Also, we only care about records available in quantities greater than 2.
+  But we're going to be querying the data by artist and title mostly, so  what we really want is a map from artists to titles to  the stores the title is available at and in what quantities.  To make it more contrived, we care only about records available in quantities greater than 2.
 ```clj
 (def real-world-json-transformer
   ;; if the keys were strings instead of keywords, you could use
   ;; {"store-name" store, ...}
-  (f/transformer [{:store-name store
+  (f/transformer [{:store-name store ;; let [store (get `map` :store-name) ...]
                    :location loc
-                   :stock [{:keys [artist title quantity]}]}]
-                 {artist {title [[(str store " @ " loc) quantity]]}}
+                   :stock [{:keys [artist title quantity]}]}] ;; :keys has same meaning as in `let`
+                 {artist {title [[(str store " @ " loc) ;; arbitrary clojure exps in range
+                                  quantity]]}}
                  :where [(> quantity 2)])) ;; and'd together
 (real-world-json-transformer real-world-json)
 ;; =>
 {"Ligeti"
  {"Violin Concerto" [["Tom's Records @ 1234 Main Street" 6]
-                     ["Roger's Records @ 789 Secondary Street" 3]],
-  "Piano Concerto" [["Roger's Records @ 789 Secondary Street" 7]]},
+                     ["Sarah's Records @ 789 Secondary Street" 3]],
+  "Piano Concerto" [["Sarah's Records @ 789 Secondary Street" 7]]},
  "Scriabin"
- {"12 Etudes" [["Roger's Records @ 789 Secondary Street" 4]]}}
+ {"12 Etudes" [["Sarah's Records @ 789 Secondary Street" 4]]}}
 ```
   The generated functions use transients and doseqs, which probably makes them more efficient  than hand-written ones written in a functional style. For example,  `real-world-json-transformer` as above generates a function similar to what's below  (the real one has some unnecessary layers of let-bindings).
 ```clj
@@ -126,9 +129,9 @@
              [(+ n k j y)])
 ;; => [7, 8] via [(+ 1 2 3 1) (+ 1 2 4 1)]
 ```
-  Similarly, if you want to use a variable literal, you need `(:literal ...)`
+  Similarly, if you want to use a variable literal (wording?), you need `(:literal ...)`
 ```clj
-(defn merge-key-vals [m k1 k2]
+(defn merge-key-vals [m k1 k2] ;; better written as (into (into #{} (get m k1)) (get m k2)) -- I agree
   (f/transform m
                {(:literal k1) [v1]
                 (:literal k2) [v2]}
@@ -155,7 +158,7 @@
 ```
 
 ## Cartesian Product & Beyond of key/val Pairs in a Map
-  For a simple example, suppose we have a map from keywords to integers  and want to find every pair of keywords whose corresponding values sum to 10:
+  This was a "happy accident" of the design; I'm not sure why anyone would find it  useful, but it's at least somewhat cool.  For a simple example, suppose we have a map from keywords to integers  and want to find every pair of keywords whose corresponding values sum to 10:
 ```clj
 (def keys-whose-vals-sum-to-10
   ;; read the domain as "for all keys k, k' in a map, and for all respective values v, v'"
