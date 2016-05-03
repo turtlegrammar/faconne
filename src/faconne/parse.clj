@@ -202,41 +202,6 @@
                         (update :child (partial go out-env))))))]
       (go clauses-with-envs domain))))
 
-(defn- parse-range
-  "Unbelievably ugly. Really need to change this."
-  [structure]
-  (let [bad-range (str "The range must be a map, set, or "
-                       "vector. You provided " structure ".")
-        empty-result (cond (map? structure) {}
-                           (set? structure) #{}
-                           (vector? structure) []
-                           :else (throw (Exception. bad-range)))]
-    (loop [structure structure ;; struct to recurse on
-           path [] ;; under what keys should the leaf be inserted?
-           type nil ;; (:seq | :seq-in-map | :map)
-           empty nil ;; what value is the empty range?
-           nest 0]
-      (cond (not (coll? structure))
-            {:path path :type type
-             :leaf structure :empty empty-result
-             :nest (dec nest) :empty-leaf-cont empty}
-
-            (map? structure)
-            (let [[k v] (first structure)]
-              (recur v (conj path k) :map {} (inc nest)))
-
-            (or (vector? structure) (set? structure))
-            {:path path
-             :leaf structure
-             :type (if (= type :map)
-                     :seq-in-map
-                     :seq)
-             :empty-leaf-cont (if (vector? structure)
-                                `(transient  [])
-                                `(transient #{}))
-             :empty empty-result
-             :nest nest}))))
-
 (defn- validate-where-clauses
   [clauses]
   (if-not (or (nil? clauses) (vector? clauses))
@@ -248,12 +213,8 @@
   (comp squash assign-bind-ids parse-domain))
 
 (defn parse
-  [domain range where]
-  (let [pdomain (analyze-domain domain)
-        prange (parse-range range)
-
-        where-domain (->> where
-                          validate-where-clauses
-                          (add-where-clauses pdomain))]
-    {:domain where-domain
-     :range prange}))
+  [domain where]
+  (let [pdomain (analyze-domain domain)]
+    (->> where
+         validate-where-clauses
+         (add-where-clauses pdomain))))

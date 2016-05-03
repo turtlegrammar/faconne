@@ -111,7 +111,7 @@
 
         :else `(fn [x# _#] x#)))
 
-(defn gen-modifier
+(defn build-clauses-from-range
   [structure result-sym]
   (cond (or (vector? structure) (set? structure))
         {:init `(volatile! ~(if (vector? structure) `(transient []) `(transient #{})))
@@ -131,17 +131,14 @@
   (let [result-sym    (gensym "result")
         structure-sym (gensym "structure")
 
-        {pdomain :domain prange :range}
-        (parse/parse domain range where)
+        pdomain (parse/parse domain where)
 
         {inner-modifier-clause :modifier
          return-clause :return
          init-result :init}
-        (gen-modifier range result-sym)
+        (build-clauses-from-range range result-sym)
 
-        joiner (gen-joiner range)
-        empty-result  (:empty prange)
-        nest          (:nest prange)]
+        joiner (gen-joiner range)]
     (letfn
         [(go [{:keys [bindings where child] :as domain}
               id->sym]
@@ -160,5 +157,4 @@
       `(fn [~structure-sym]
          (let [~result-sym ~init-result]
            ~(go pdomain {parse/first-bind-id structure-sym})
-           ~return-clause
-           )))))
+           ~return-clause)))))
