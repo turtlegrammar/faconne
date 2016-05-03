@@ -123,7 +123,7 @@
         (map? structure)
         {:init `(volatile! (transient []))
          :return `(do (vswap! ~result-sym persistent!)
-                      (vswap! ~result-sym (fn [x#] (reduce ~(gen-joiner structure) x#))))
+                      (vswap! ~result-sym (fn [x#] (reduce ~(gen-joiner structure) {}  x#))))
          :modifier `(vswap! ~result-sym conj! ~structure)}))
 
 (defn genfn

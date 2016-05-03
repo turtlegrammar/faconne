@@ -2,6 +2,98 @@
   (:require [faconne.core :as f])
   (:use [clojure.test]))
 
+(def test-times 20)
+
+(defn gen-structure-from-domain
+  [domain]
+  (let [max-size 10
+        get-size (fn [& args] (Math/floor (rand max-size)))
+        exec (fn [f] (f))]
+    (letfn [(create [domain]
+              (cond (symbol? domain) rand
+
+                    (or (vector? domain) (set? domain))
+                    (let [create-elems (map create domain)
+                          return (if (vector? domain) identity (partial into #{}))]
+                      (fn [& args]
+                        (->> (for [_ (range 0 (* (count domain) (get-size)))]
+                               (mapv exec create-elems))
+                             (reduce into [])
+                             return)))
+
+                    (map? domain)
+                    (let [[k v] (first domain)
+                          create-key (create k)
+                          create-val (create v)]
+                      (fn [& args]
+                        (->> (for [_ (range 0 (get-size))] [(create-key) (create-val)])
+                             (into {}))))))]
+      (create domain))))
+
+(defn test-trans
+  [mkdata domain range' where hand-written]
+  (let [data (mkdata)
+        from-trans-fn (eval `(f/transformer ~domain ~range'))
+        from-trans (from-trans-fn data)
+        from-hand (hand-written data)]
+      (testing (str "Testing transformer on " domain " " range' " " where
+                    ".\n Data = " data)
+        (is (= from-trans from-hand)))))
+
+(defmacro test-transformer
+  [domain range' where hand-written times]
+  `(let [mkdata# (gen-structure-from-domain (quote ~domain))]
+     (doseq [_# (range 0 ~times)]
+       (test-trans mkdata# (quote ~domain) (quote ~range') (quote ~where) ~hand-written))))
+
+(deftest test-map-domains
+  (let [swap-key-order ;; {k1 {k2 v}} -> {k2 {k1 v}}
+        (fn [m]
+          (or
+           (apply merge-with merge
+                  (map (fn [[k1 inner]]
+                         (apply merge-with merge
+                                (map (fn [[k2 v]]
+                                       {k2 {k1 v}}) inner))) m))
+           {}))
+        remove-inner ;; {k1 {k2 v}} -> {k1 #{v}}
+        (fn [m]
+          (or
+           (apply merge-with into
+                  (map (fn [[k inner]]
+                         (apply merge-with into
+                                (map (fn [[_ v]] {k #{v}}) inner)))
+                       m))
+           {}))
+
+        flip (fn [m] (or (into {} (map (fn [[k v]] [v k]) m)) {})) ;; {k v} -> {v k}
+
+        skipping-flatset (fn [m] ;; {k [v]} -> #{[k v]}
+                            (or
+                             (reduce into
+                                     #{}
+                                     (map (fn [[k vector]]
+                                            (reduce into #{} (->> vector
+                                                                  (partition 2)
+                                                                  (map first)
+                                                                  (map (fn [v] #{[k v]})))))
+                                          m))
+                             {}))]
+    (test-transformer {k1 {k2 v}} {k2 {k1 v}} [] swap-key-order test-times)
+    (test-transformer {k {_ v}} {k #{v}} [] remove-inner test-times)
+    (test-transformer {k v} {v k} [] flip test-times)
+    (test-transformer {k [v _]} #{[k v]} [] skipping-flatset test-times)
+    ))
+
+(deftest test-vector-domains
+  (let [seconds (fn [v] (map second (partition 2 v)))
+        sums-of-pairs-of-odds (fn [v] (map (fn [[a b c d]] (+ a c)) (partition 4 v)))]
+    (test-transformer [_ b] [b] [] seconds test-times)
+    (test-transformer [a _ c _] [(+ a c)] [] sums-of-pairs-of-odds test-times)
+    (test-transformer [[a]] [a] [] (partial reduce into []) test-times)
+    ))
+
+
 (def profs->classes->students
   {"Sussman" {"AI"
               [{:name "John"
