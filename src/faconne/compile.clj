@@ -2,54 +2,12 @@
   (:require [faconne.parse :as parse]
             [clojure.core.match :refer [match]]))
 
-(defn create-assoc!
-  [m k v]
-  (assoc! (or m (transient {})) k v))
-
-(defn assoc-in!
-  [m [k & ks] v]
-  (if-not ks
-    (create-assoc! m k v)
-    (create-assoc! m k (assoc-in! (get m k) ks v))))
-
-(defn update!
-  [m k f]
-  (create-assoc! m k (f (get m k))))
-
-(defn update-in!
-  [m [k & ks] f]
-  (if-not ks
-    (update! m k f)
-    (create-assoc! m k (update-in! (get m k) ks f))))
-
-;; Could be a function, but `xs` is known at compile time.
-;; By the same reasoning, update-in! and assoc-in! could be macros.
-;; For some reason, they're not, and this is.
 (defmacro into!
-  [coll xs default]
-  `(do ~@(map-indexed (fn [i x] (if (> i 0)
-                                  `(conj! ~coll ~x)
-                                  `((fnil conj! ~default) ~coll ~x)))
-                      xs)))
-
-(defn deep-persistent!
-  [nest coll]
-  (if (= nest 0)
-    (persistent! coll)
-    (->> (persistent! coll)
-         (mapv (fn [[k v]] [k (deep-persistent! (dec nest) v)]))
-         (into {}))))
-
-(defn modifier-clause
-  [{:keys [path leaf type empty empty-leaf-cont]}
-   result-sym]
-  (case type
-    :seq `(into! ~result-sym ~leaf ~empty)
-
-    :map `(assoc-in! ~result-sym ~path ~leaf)
-
-    :seq-in-map `(update-in! ~result-sym ~path
-                             (fn [x#] (into! x# ~leaf ~empty-leaf-cont)))))
+  [coll xs]
+  (loop [xs xs, result coll]
+    (if (empty? xs)
+      result
+      (recur (rest xs) `(conj! ~result ~(first xs))))))
 
 (defn gen-binding
   [{:keys [type parent-id id] :as binding}
@@ -125,18 +83,48 @@
   [exp {:keys [part-size elem-syms vec-sym]}]
   (if-not elem-syms
     exp
-    (let [index-sym (gensym "i")
+    (let [as-vec (gensym "as-vec")
+          index-sym (gensym "i")
           bindings (->> elem-syms
                         (map-indexed
                          (fn [i elem-sym]
-                           [elem-sym `(get ~vec-sym (+ ~index-sym ~i))]))
+                           [elem-sym `(get ~as-vec (+ ~index-sym ~i))]))
                         (reduce into []))]
-      `(let [size# (count ~vec-sym)]
+      `(let [~as-vec (vec ~vec-sym)
+             size# (count ~as-vec)]
          (loop [~index-sym 0]
            (when (< ~index-sym size#)
              (let ~bindings
                ~exp
                (recur (+ ~index-sym ~part-size)))))))))
+
+(defn gen-joiner
+  [structure]
+  (cond (vector? structure) `into
+        (set? structure) `into
+
+        (map? structure)
+        (let [[k v] (first structure)]
+          (if-not (or (vector? v) (set? v) (map? v))
+            `merge
+            `(fn [x# y#] (merge-with ~(gen-joiner v) x# y#))))
+
+        :else `(fn [x# _#] x#)))
+
+(defn gen-modifier
+  [structure result-sym]
+  (cond (or (vector? structure) (set? structure))
+        {:init `(volatile! ~(if (vector? structure) `(transient []) `(transient #{})))
+         :return `(vswap! ~result-sym persistent!)
+         :modifier (if (= (count structure) 1)
+                     `(vswap! ~result-sym conj! ~(first structure))
+                     `(vswap! ~result-sym (fn [x#] (into! x# ~structure))))}
+
+        (map? structure)
+        {:init `(volatile! (transient []))
+         :return `(do (vswap! ~result-sym persistent!)
+                      (vswap! ~result-sym (fn [x#] (reduce ~(gen-joiner structure) x#))))
+         :modifier `(vswap! ~result-sym conj! ~structure)}))
 
 (defn genfn
   [domain range where]
@@ -146,14 +134,19 @@
         {pdomain :domain prange :range}
         (parse/parse domain range where)
 
-        modifier      (modifier-clause prange result-sym)
+        {inner-modifier-clause :modifier
+         return-clause :return
+         init-result :init}
+        (gen-modifier range result-sym)
+
+        joiner (gen-joiner range)
         empty-result  (:empty prange)
         nest          (:nest prange)]
     (letfn
         [(go [{:keys [bindings where child] :as domain}
               id->sym]
              (if-not domain
-               modifier
+               inner-modifier-clause
                (let [{:keys [let-bindings doseq-bindings
                              loop-bindings id->sym]}
                      (gen-bindings bindings id->sym)]
@@ -165,6 +158,7 @@
                      (wrap-let-bindings let-bindings)))))]
 
       `(fn [~structure-sym]
-         (let [~result-sym (transient ~empty-result)]
+         (let [~result-sym ~init-result]
            ~(go pdomain {parse/first-bind-id structure-sym})
-           (deep-persistent! ~nest ~result-sym))))))
+           ~return-clause
+           )))))

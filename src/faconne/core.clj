@@ -26,3 +26,25 @@
   [domain range & options]
   (let [where (:where (options-map options))]
     (pprint (genfn domain range where))))
+
+(defn handwritten-swap-key-order
+  [m]
+  (apply merge-with merge
+         (map (fn [[k1 inner]]
+                (apply merge-with merge
+                       (map (fn [[k2 v]]
+                              {k2 {k1 v}}) inner))) m)))
+
+;; in milliseconds
+(defmacro time-it-takes
+  [exp]
+  `(let [start# (. java.lang.System (clojure.core/nanoTime))]
+     ~exp
+     (let [end# (. java.lang.System (clojure.core/nanoTime))]
+       (/ (- end# start#) 1000000.0))))
+
+(defmacro average-time
+  [exp trials]
+  `(loop [t# ~trials sum# 0.0]
+     (if (<= t# 0) (/ sum# ~trials)
+         (recur (dec t#) (+ sum# (time-it-takes ~exp))))))
