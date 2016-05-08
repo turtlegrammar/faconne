@@ -5,10 +5,11 @@
 (def test-times 20)
 
 (defn gen-structure-from-domain
+  "Create a function that when invoked will generate a random extension of `domain`."
   [domain]
   (let [max-size 10
         get-size (fn [& args] (Math/floor (rand max-size)))
-        exec (fn [f] (f))]
+        exec     (fn [f] (f))]
     (letfn [(create [domain]
               (cond (symbol? domain) rand
 
@@ -32,18 +33,18 @@
 
 (defn test-trans
   [mkdata domain range' where hand-written]
-  (let [data (mkdata)
-        from-trans-fn (eval `(f/transformer ~domain ~range'))
-        from-trans (from-trans-fn data)
-        from-hand (hand-written data)]
+  (let [data          (mkdata)
+        from-trans-fn (eval `(f/transformer ~domain ~range' :where ~where))
+        from-trans    (from-trans-fn data)
+        from-hand     (hand-written data)]
       (testing (str "Testing transformer on " domain " " range' " " where
                     ".\n Data = " data)
         (is (= from-trans from-hand)))))
 
 (defmacro test-transformer
-  [domain range' where hand-written times]
+  [domain range' where hand-written]
   `(let [mkdata# (gen-structure-from-domain (quote ~domain))]
-     (doseq [_# (range 0 ~times)]
+     (doseq [_# (range 0 ~test-times)]
        (test-trans mkdata# (quote ~domain) (quote ~range') (quote ~where) ~hand-written))))
 
 (deftest test-map-domains
@@ -70,55 +71,54 @@
 
         skipping-flatset (fn [m] ;; {k [v]} -> #{[k v]}
                             (or
-                             (reduce into
-                                     #{}
+                             (reduce into #{}
                                      (map (fn [[k vector]]
                                             (reduce into #{} (->> vector
                                                                   (partition 2)
                                                                   (map first)
                                                                   (map (fn [v] #{[k v]})))))
                                           m))
-                             {}))]
-    (test-transformer {k1 {k2 v}} {k2 {k1 v}} [] swap-key-order test-times)
-    (test-transformer {k {_ v}} {k #{v}} [] remove-inner test-times)
-    (test-transformer {k v} {v k} [] flip test-times)
-    (test-transformer {k [v _]} #{[k v]} [] skipping-flatset test-times)
-    ))
+                             {}))
+        sums-of-all-pairs-of-vals (fn [m] (let [vs (vals m)]
+                                            (reduce into #{}
+                                                    (map (fn [i]
+                                                           (into #{} (map (fn [j] (+ i j)) vs)))
+                                                         vs))))]
+    (test-transformer {k1 {k2 v}} {k2 {k1 v}} [] swap-key-order)
+    (test-transformer {k {_ v}} {k #{v}} [] remove-inner)
+    (test-transformer {k v} {v k} [] flip)
+    (test-transformer {k [v _]} #{[k v]} [] skipping-flatset)
+    (test-transformer {k1 v1, k2 v2} #{(+ v1 v2)} [] sums-of-all-pairs-of-vals)))
 
 (deftest test-vector-domains
   (let [seconds (fn [v] (map second (partition 2 v)))
-        sums-of-pairs-of-odds (fn [v] (map (fn [[a b c d]] (+ a c)) (partition 4 v)))]
-    (test-transformer [_ b] [b] [] seconds test-times)
-    (test-transformer [a _ c _] [(+ a c)] [] sums-of-pairs-of-odds test-times)
-    (test-transformer [[a]] [a] [] (partial reduce into []) test-times)
-    ))
+        sums-of-pairs-of-odds (fn [v] (map (fn [[a b c d]] (+ a c)) (partition 4 v)))
+        sums-of-1-3-in-2 (fn [v] (->> v
+                                      (partition 3)
+                                      (map second)
+                                      (map (partial partition 3))
+                                      (map (fn [v2] (into #{}
+                                                          (map (fn [[a _ c]] (+ a (or c 0))) v2))))
+                                      (reduce into #{})))
+        super-contrived (fn [v] (->> v
+                                     (partition 2)
+                                     (map first)
+                                     (map #(->> %
+                                                (map (fn [[k vector]]
+                                                       (into #{} (map (partial + k) vector))))
+                                                (reduce into #{})))
+                                     (reduce into #{})))]
+    (test-transformer [_ b] [b] [] seconds)
+    (test-transformer [a _ c _] [(+ a c)] [a c] sums-of-pairs-of-odds)
+    (test-transformer [[a]] [a] [] (partial reduce into []))
+    (test-transformer [_ [a _ c] _] #{(+ a c)} [a c] sums-of-1-3-in-2)
+    (test-transformer [{k [v]} _] #{(+ k v)} [] super-contrived)))
 
-
-(def profs->classes->students
-  {"Sussman" {"AI"
-              [{:name "John"
-                :grade "A"}
-               {:name "Sally"
-                :grade "B"}]
-              "Compilers"
-              [{:name "Tom"
-                :grade "B"}
-               {:name "John"
-                :grade "B"}]}
-   "Abelson" {"Machine Learning"
-              [{:name "Sally"
-                :grade "C"}
-               {:name "Tom"
-                :grade "B-"}]
-              "Compilers"
-              [{:name "Eva Lu Ator"
-                :grade "B"}
-               {:name "Ben Bitdiddle"
-                :grade "A"}]}})
-
-(def students->profs {"John" #{"Sussman"} "Sally" #{"Abelson" "Sussman"}
-                      "Tom" #{"Abelson" "Sussman"} "Eva Lu Ator" #{"Abelson"}
-                      "Ben Bitdiddle" #{"Abelson"}})
+(deftest test-set-domains
+  (let [adj-sums (fn [s] (->> s
+                              (map (fn [v] (into #{} (map (partial apply +) (partition 2 v)))))
+                              (reduce into #{})))]
+    (test-transformer #{[a b]} #{(+ a b)} [a b] adj-sums)))
 
 (deftest map->map
   (let [m {:a {:b 2 :c 5} :c {:b 3 :e 1}}]
@@ -131,20 +131,34 @@
             :e {:c 1}}))))
 
 (deftest set-in-map
-  (is (= (f/transform profs->classes->students
-                      {prof {_ [student]}}
-                      {(:name student) #{prof}})
-         students->profs))
+  (let [profs->classes->students
+        {"Sussman" {"AI" [{:name "John" :grade "A"}
+                          {:name "Sally" :grade "B"}]
+                    "Compilers" [{:name "Tom" :grade "B"}
+                                 {:name "John" :grade "B"}]}
+         "Abelson" {"Machine Learning" [{:name "Sally" :grade "C"}
+                                        {:name "Tom" :grade "B-"}]
+                    "Compilers" [{:name "Eva Lu Ator" :grade "B"}
+                                 {:name "Ben Bitdiddle" :grade "A"}]}}
 
-  (is (= (f/transform profs->classes->students
-                      {prof {_ [{:keys [name]}]}}
-                      {name #{prof}})
-         students->profs))
+        students->profs {"John" #{"Sussman"} "Sally" #{"Abelson" "Sussman"}
+                         "Tom" #{"Abelson" "Sussman"} "Eva Lu Ator" #{"Abelson"}
+                         "Ben Bitdiddle" #{"Abelson"}}]
 
-  (is (= (f/transform profs->classes->students
-                      {prof {_ [{:name name}]}}
-                      {name #{prof}})
-         students->profs)))
+    (is (= (f/transform profs->classes->students
+                        {prof {_ [student]}}
+                        {(:name student) #{prof}})
+           students->profs))
+
+    (is (= (f/transform profs->classes->students
+                        {prof {_ [{:keys [name]}]}}
+                        {name #{prof}})
+           students->profs))
+
+    (is (= (f/transform profs->classes->students
+                        {prof {_ [{:name name}]}}
+                        {name #{prof}})
+           students->profs))))
 
 (deftest simple-vector-partioning
   (is (-> [1 2 3 4 5 6]

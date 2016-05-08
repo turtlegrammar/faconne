@@ -2,6 +2,8 @@
   (:require [faconne.parse :as parse]
             [clojure.core.match :refer [match]]))
 
+;; `xs` is always known at compile time, so this can be a macro to avoid some
+;; recursive function overhead.
 (defmacro into!
   [coll xs]
   (loop [xs xs, result coll]
@@ -9,7 +11,11 @@
       result
       (recur (rest xs) `(conj! ~result ~(first xs))))))
 
-(defn gen-binding
+(defn- gen-binding
+  "Takes a binding type (parse/parse-domain) and map from binding ids
+  to their symbols (parse/assign-bind-ids). Associated with the binding type
+  is a parent-sym, which we lookup in the `id->sym` map to get an rvalue to bind
+  against."
   [{:keys [type parent-id id] :as binding}
    id->sym]
   (let [parent-sym (id->sym parent-id)]
@@ -29,7 +35,7 @@
 
            [:set]
            (let [new-parent (gensym "set-parent")]
-             {:let-bindings [new-parent parent-sym]
+             {:doseq-bindings [new-parent parent-sym]
               :id->sym {id new-parent}})
 
            [:vector num-children]
@@ -52,13 +58,13 @@
              {:let-bindings [new-parent `(get ~parent-sym ~key)]
               :id->sym {id new-parent}}))))
 
-(defn gen-bindings
+(defn- gen-bindings
   [bindings id->sym]
   (->> bindings
        (map #(gen-binding % id->sym))
        (apply merge-with into)))
 
-(defn wrap-where-clauses
+(defn- wrap-where-clauses
   [exp clauses]
   (cond (empty? clauses) exp
 
@@ -67,19 +73,19 @@
 
         :else `(when (and ~@clauses) ~exp)))
 
-(defn wrap-let-bindings
+(defn- wrap-let-bindings
   [exp let-bindings]
   (if (not-empty let-bindings)
     `(let ~let-bindings ~exp)
     exp))
 
-(defn wrap-doseq-bindings
+(defn- wrap-doseq-bindings
   [exp doseq-bindings]
   (if (not-empty doseq-bindings)
     `(doseq ~doseq-bindings ~exp)
     exp))
 
-(defn wrap-loop-bindings
+(defn- wrap-loop-bindings
   [exp {:keys [part-size elem-syms vec-sym]}]
   (if-not elem-syms
     exp
@@ -98,7 +104,10 @@
                ~exp
                (recur (+ ~index-sym ~part-size)))))))))
 
-(defn gen-joiner
+(defn- gen-joiner
+  "Creates a function that merges two extensions of the range schema.
+  When the range schema is a vector of set or something, it's simply `into`.
+  If the range is a map, then construct a deep merging fn."
   [structure]
   (cond (vector? structure) `into
         (set? structure) `into
@@ -111,50 +120,77 @@
 
         :else `(fn [x# _#] x#)))
 
-(defn build-clauses-from-range
-  [structure result-sym]
-  (cond (or (vector? structure) (set? structure))
-        {:init `(volatile! ~(if (vector? structure) `(transient []) `(transient #{})))
+(defn- build-clauses-from-range
+  "The strategy: In general, maintain a volatile reference to the result.
+
+  If the range is a vector/set, the result will be a transient []/#{}.
+  At each leaf, evaluate the range and 'vswap! into!' it into the maintained result.
+  At the end of the fn, just call persistent! on the result.
+  You might think the volatile ref is extraneous since we're using transients, but
+  fns like `conj!` are meant to be used for the result they return, not for their side-effects.
+  (This caused a weird bug.)
+
+  If the range is a map, then the result is a persistent map. Initially, I had created
+  functions like assoc-in! and update-in! that worked on nested map transients, but found that these
+  were actually slower than just merging a bunch of small persistent maps together. I'm not
+  really sure why this was the case. Anyway, at each leaf, evaluate the range and merge it
+  into the result using the deep-merge fn obtained by `gen-joiner`. At the end, just return the
+  result. "
+  [range result-sym joiner-sym]
+  (cond (or (vector? range) (set? range))
+        {:init `(volatile! ~(if (vector? range) `(transient []) `(transient #{})))
          :return `(vswap! ~result-sym persistent!)
-         :modifier (if (= (count structure) 1)
-                     `(vswap! ~result-sym conj! ~(first structure))
-                     `(vswap! ~result-sym (fn [x#] (into! x# ~structure))))}
+         :joiner `identity
+         :modifier (if (= (count range) 1)
+                     `(vswap! ~result-sym conj! ~(first range))
+                     `(vswap! ~result-sym (fn [x#] (into! x# ~range))))}
 
-        (map? structure)
-        {:init `(volatile! (transient []))
-         :return `(do (vswap! ~result-sym persistent!)
-                      (vswap! ~result-sym (fn [x#] (reduce ~(gen-joiner structure) {}  x#))))
-         :modifier `(vswap! ~result-sym conj! ~structure)}))
+        (map? range)
+        {:init `(volatile! {})
+         :return `(deref ~result-sym)
+         :joiner (gen-joiner range)
+         :modifier `(vswap! ~result-sym ~joiner-sym ~range)}))
 
-(defn genfn
+(defn- build-traverser
+  [{:keys [bindings where child] :as domain}
+   id->sym
+   inner-modifier-clause]
+  (if-not domain
+    inner-modifier-clause
+    (let [{:keys [let-bindings doseq-bindings
+                  loop-bindings id->sym]}
+          (gen-bindings bindings id->sym)]
+
+      (-> (build-traverser child id->sym inner-modifier-clause)
+          (wrap-where-clauses where)
+          (wrap-loop-bindings loop-bindings)
+          (wrap-doseq-bindings doseq-bindings)
+          (wrap-let-bindings let-bindings)))))
+
+(defn gen-iterator
+  [domain action where]
+  (let [pdomain (parse/parse domain where)
+        structure-sym (gensym "structure")]
+    `(fn [~structure-sym]
+       ~(build-traverser pdomain {parse/first-bind-id structure-sym} action)
+       nil)))
+
+(defn gen-transformer
   [domain range where]
   (let [result-sym    (gensym "result")
         structure-sym (gensym "structure")
+        joiner-sym    (gensym "joiner")
 
         pdomain (parse/parse domain where)
 
         {inner-modifier-clause :modifier
-         return-clause :return
-         init-result :init}
-        (build-clauses-from-range range result-sym)
+         return-clause         :return
+         init-result           :init
+         joiner                :joiner}
+        (build-clauses-from-range range result-sym joiner-sym)]
 
-        joiner (gen-joiner range)]
-    (letfn
-        [(go [{:keys [bindings where child] :as domain}
-              id->sym]
-             (if-not domain
-               inner-modifier-clause
-               (let [{:keys [let-bindings doseq-bindings
-                             loop-bindings id->sym]}
-                     (gen-bindings bindings id->sym)]
-
-                 (-> (go child id->sym)
-                     (wrap-where-clauses where)
-                     (wrap-loop-bindings loop-bindings)
-                     (wrap-doseq-bindings doseq-bindings)
-                     (wrap-let-bindings let-bindings)))))]
-
-      `(fn [~structure-sym]
-         (let [~result-sym ~init-result]
-           ~(go pdomain {parse/first-bind-id structure-sym})
-           ~return-clause)))))
+    `(fn [~structure-sym]
+       (let [~result-sym ~init-result
+             ~joiner-sym ~joiner]
+         ~(build-traverser pdomain {parse/first-bind-id structure-sym} inner-modifier-clause)
+         ~return-clause))))

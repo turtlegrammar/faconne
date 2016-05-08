@@ -25,9 +25,9 @@
 (defn- symbols
   "Get a set of all the symbols used in a data structure."
   [structure]
-  (let [syms (transient #{})]
-    (walk/postwalk #(if (symbol? %) (conj! syms %)) structure)
-    (persistent! syms)))
+  (let [syms (atom #{})]
+    (walk/postwalk #(if (symbol? %) (swap! syms conj %)) structure)
+    @syms))
 
 (defn- parse-domain
   "Returns:
@@ -126,8 +126,10 @@
   "parse-domain returns an unwieldy multiway tree: each domain 'frame' has
   exactly one binding and n (variable) children. It would be easier to work with if each frame
   had instead n bindings and 1 child. However, each binding must know its parent.
+  (e.g., in {:a [x] :b [y]}, we need to know that x is bound to the vector whose key is :a,
+   or that (get m :a) [for some m] is the parent of x.)
   By assigning each binding an `:id` and `:parent-id`, we can later squash all of them into
-  a simple linear list (see `squash`)."
+  a simple list (see `squash`)."
   [domains]
   (let [id (atom -1)
         get-id #(do (swap! id inc) @id)
@@ -161,7 +163,7 @@
 (defn- squash
   "Squash a vector of binding frames - each having exactly one binding
   and multiple children - into a single binding frame having multiple
-  bindings and exactly one child."
+  bindings and at most one child."
   [domains]
   (letfn [(go [domains parent-env]
               (if-not (empty? domains)
