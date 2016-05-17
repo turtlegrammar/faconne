@@ -1,3 +1,7 @@
+;;; Faconneeeeiiiigh is a real workhorse!
+;;; ![logo](faconne_logo.png)
+;;; Logo courtesy of [Clayton Belcher](http://claytonbelcher.com/).
+
 ;;; This README is generated from `demo.clj`.
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
