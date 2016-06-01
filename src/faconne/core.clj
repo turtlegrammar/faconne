@@ -26,7 +26,7 @@
   `(let [f# (transformer ~domain ~range ~@options)]
      (f# ~x)))
 
-(defmacro iterate
+(defmacro for-each
   [x domain action & options]
   `(let [f# (iterator ~domain ~action ~@options)]
      (f# ~x)))

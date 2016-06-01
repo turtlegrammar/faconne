@@ -144,9 +144,9 @@
 (print-albums real-world-json)
 ;; prints "You can buy Bartók's album String Quartets at Tom's Records (1234 Main Street)."  etc.
 
-;;; `f/iterate` is to `f/iterator` what `f/transform` is to `f/transformer`.
+;;; `f/for-each` is to `f/iterator` what `f/transform` is to `f/transformer`.
 
-(f/iterate [1 2 3] [a] (prn (inc a)) :where [(even? a)])
+(f/for-each [1 2 3] [a] (prn (inc a)) :where [(even? a)])
 ;; => prints "3"
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
