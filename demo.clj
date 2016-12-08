@@ -8,7 +8,7 @@
 ;;;; Include
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;;; Lein: `[faconne "1.0.0"]`
+;;; Lein: `[faconne "1.0.2"]`
 
 ;;; Import:
 (ns demo

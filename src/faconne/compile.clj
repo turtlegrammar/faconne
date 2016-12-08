@@ -104,21 +104,15 @@
                ~exp
                (recur (+ ~index-sym ~part-size)))))))))
 
-(defn- gen-joiner
-  "Creates a function that merges two extensions of the range schema.
-  When the range schema is a vector of set or something, it's simply `into`.
-  If the range is a map, then construct a deep merging fn."
-  [structure]
-  (cond (vector? structure) `into
-        (set? structure) `into
+(defn deep-merge
+  [x y]
+  (cond (and (map? x) (map? y))
+        (merge-with deep-merge x y)
 
-        (map? structure)
-        (let [[k v] (first structure)]
-          (if-not (or (vector? v) (set? v) (map? v))
-            `merge
-            `(fn [x# y#] (merge-with ~(gen-joiner v) x# y#))))
+        (and (coll? x) (coll? y))
+        (into x y)
 
-        :else `(fn [x# _#] x#)))
+        :else y))
 
 (defn- build-clauses-from-range
   "The strategy: In general, maintain a volatile reference to the result.
@@ -130,17 +124,17 @@
   fns like `conj!` are meant to be used for the result they return, not for their side-effects.
   (This caused a weird bug.)
 
-  If the range is a map, then the result is a persistent map. Initially, I had created
-  functions like assoc-in! and update-in! that worked on nested map transients, but found that these
-  were actually slower than just merging a bunch of small persistent maps together. I'm not
-  really sure why this was the case. Anyway, at each leaf, evaluate the range and merge it
-  into the result using the deep-merge fn obtained by `gen-joiner`. At the end, just return the
-  result. "
-  [range result-sym joiner-sym]
+  If the range is a map, then the result is a persistent
+  map. Initially, I had created functions like assoc-in! and
+  update-in! that worked on nested map transients, but found that
+  these were actually slower than just merging a bunch of small
+  persistent maps together. I'm not really sure why this was the
+  case. Anyway, at each leaf, evaluate the range and deep merge it
+  into the result. At the end, just return the result. "
+  [range result-sym]
   (cond (or (vector? range) (set? range))
         {:init `(volatile! ~(if (vector? range) `(transient []) `(transient #{})))
          :return `(vswap! ~result-sym persistent!)
-         :joiner `identity
          :modifier (if (= (count range) 1)
                      `(vswap! ~result-sym conj! ~(first range))
                      `(vswap! ~result-sym (fn [x#] (into! x# ~range))))}
@@ -148,8 +142,7 @@
         (map? range)
         {:init `(volatile! {})
          :return `(deref ~result-sym)
-         :joiner (gen-joiner range)
-         :modifier `(vswap! ~result-sym ~joiner-sym ~range)}))
+         :modifier `(vswap! ~result-sym deep-merge ~range)}))
 
 (defn- build-traverser
   [{:keys [bindings where child] :as domain}
@@ -179,18 +172,15 @@
   [domain range where]
   (let [result-sym    (gensym "result")
         structure-sym (gensym "structure")
-        joiner-sym    (gensym "joiner")
 
         pdomain (parse/parse domain where)
 
         {inner-modifier-clause :modifier
          return-clause         :return
-         init-result           :init
-         joiner                :joiner}
-        (build-clauses-from-range range result-sym joiner-sym)]
+         init-result           :init}
+        (build-clauses-from-range range result-sym)]
 
     `(fn [~structure-sym]
-       (let [~result-sym ~init-result
-             ~joiner-sym ~joiner]
+       (let [~result-sym ~init-result]
          ~(build-traverser pdomain {parse/first-bind-id structure-sym} inner-modifier-clause)
          ~return-clause))))

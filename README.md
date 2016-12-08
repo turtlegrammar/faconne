@@ -1,6 +1,6 @@
   Faconneeeeiiiigh is a real workhorse!  ![logo](faconne_logo.png)  Logo courtesy of [Clayton Belcher](http://claytonbelcher.com/).  This README is generated from `demo.clj`.
 ## Include
-  Lein: `[faconne "1.0.0"]`  Import:
+  Lein: `[faconne "1.0.2"]`  Import:
 ```clj
 (ns demo
   (:require [faconne.core :as f]))
