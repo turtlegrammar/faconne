@@ -1,5 +1,6 @@
 (ns faconne.core
   (:require [faconne.compile :refer [gen-iterator gen-transformer]]
+            [faconne.util :refer [error]]
             [clojure.pprint :refer [pprint]]))
 
 (defn- options-map
@@ -7,8 +8,8 @@
   (let [m (apply hash-map options)
         unsupported (-> m (dissoc :where))]
     (if-not (empty? unsupported)
-      (throw (Exception. (str "Unsupported options to transform(er): "
-                              unsupported "; only `:where` is supported.")))
+      (error (str "Unsupported options to transform(er): "
+                  unsupported "; only `:where` is supported."))
       m)))
 
 (defmacro transformer

@@ -1,6 +1,7 @@
 (ns faconne.compile
   (:require [faconne.parse :as parse]
-            [clojure.core.match :refer [match]]))
+            #?(:clj [clojure.core.match :refer [match]]
+               :cljs [cljs.core.match :refer-macros [match]])))
 
 ;; `xs` is always known at compile time, so this can be a macro to avoid some
 ;; recursive function overhead.

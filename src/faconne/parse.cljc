@@ -1,7 +1,9 @@
 (ns faconne.parse
   (:require [clojure.set :as set]
+            [faconne.util :refer [error]]
             [clojure.walk :as walk]
-            [clojure.core.match :refer [match]]))
+            #?(:clj [clojure.core.match :refer [match]]
+               :cljs [cljs.core.match :refer-macros [match]])))
 
 ;; Grammar for Domains:
 ;; Domain := Symbol [terminal]
@@ -71,7 +73,7 @@
 
                     (set? dom)
                     (if (> (count dom) 1)
-                      (throw (Exception. "Sets in the domain can have only one element."))
+                      (error "Sets in the domain can have only one element.")
                       [{:bind {:type [:set]}
                         :env parent-env
                         :children (go (first dom) parent-env)}])
@@ -80,22 +82,22 @@
                     (for [[k v] dom]
                       (cond (#{:keys :strs :syms} k)
                             (if-not (and (vector? v) (every? symbol? v))
-                              (throw (Exception. (str "The binding " {k v} " is expected to "
-                                                      "conform to Clojure's map destructuring "
-                                                      "syntax; the value must be a vector of "
-                                                      "symbols. If you want to treat the map "
-                                                      "as having " k " as a key, then use "
-                                                      {'(:literal k) v})))
+                              (error (str "The binding " {k v} " is expected to "
+                                          "conform to Clojure's map destructuring "
+                                          "syntax; the value must be a vector of "
+                                          "symbols. If you want to treat the map "
+                                          "as having " k " as a key, then use "
+                                          {'(:literal k) v}))
                               {:bind {:type [:leaf {k v}]}
                                :env (set/union parent-env (symbols v))
                                :children nil})
 
                             (= :as k)
                             (if-not (symbol? v)
-                              (throw (Exception. (str "The binding {:as v} means that the "
-                                                      "entire map should be bound to v. "
-                                                      "If you mean to use `:as` as a key literal, "
-                                                      "then use: " {'(:literal :as) v} ".")))
+                              (error (str "The binding {:as v} means that the "
+                                          "entire map should be bound to v. "
+                                          "If you mean to use `:as` as a key literal, "
+                                          "then use: " {'(:literal :as) v} "."))
                               {:bind {:type [:as v]}
                                :env (conj parent-env v)
                                :children nil})
@@ -113,8 +115,8 @@
                                 {:bind {:type [:literal t]}
                                  :env new-env
                                  :children (go v new-env)}
-                                (throw (Exception. (str "Unsupported binding type: " k ". "
-                                                        "You probably meant: " {'(:literal k) v})))))
+                                (error (str "Unsupported binding type: " k ". "
+                                            "You probably meant: " {'(:literal k) v}))))
 
                             (or (keyword? k) (string? k))
                             {:bind {:type [:literal k]}
@@ -207,7 +209,7 @@
 (defn- validate-where-clauses
   [clauses]
   (if-not (or (nil? clauses) (vector? clauses))
-    (throw (Exception. "The arguments to `:where` should be a vector of Clojure expressions."))
+    (error "The arguments to `:where` should be a vector of Clojure expressions.")
     clauses))
 
 (def ^:private analyze-domain

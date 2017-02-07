@@ -8,11 +8,14 @@
 ;;;; Include
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;;; Lein: `[faconne "1.0.2"]`
+;;; Lein: `[faconne "1.0.3"]`
 
-;;; Import:
+;;; Import for Clojure:
 (ns demo
   (:require [faconne.core :as f]))
+
+;;; Import for Clojurescript:
+;;; ```clj (ns demo (:require [faconne.core :as f :include-macros true]))```
 
 ;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; Overview/Motivation
