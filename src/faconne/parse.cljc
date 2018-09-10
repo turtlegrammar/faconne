@@ -24,7 +24,7 @@
 ;;           | (:literal ClojureExp) Domain
 ;;
 
-(defn- symbols
+(defn symbols
   "Get a set of all the symbols used in a data structure."
   [structure]
   (let [syms (atom #{})]

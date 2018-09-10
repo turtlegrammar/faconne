@@ -1,16 +1,8 @@
 (ns faconne.compile
   (:require [faconne.parse :as parse]
+            [faconne.parse-range :as parse-range]
             #?(:clj [clojure.core.match :refer [match]]
                :cljs [cljs.core.match :refer-macros [match]])))
-
-;; `xs` is always known at compile time, so this can be a macro to avoid some
-;; recursive function overhead.
-(defmacro into!
-  [coll xs]
-  (loop [xs xs, result coll]
-    (if (empty? xs)
-      result
-      (recur (rest xs) `(conj! ~result ~(first xs))))))
 
 (defn- gen-binding
   "Takes a binding type (parse/parse-domain) and map from binding ids
@@ -105,46 +97,6 @@
                ~exp
                (recur (+ ~index-sym ~part-size)))))))))
 
-(defn deep-merge
-  [x y]
-  (cond (and (map? x) (map? y))
-        (merge-with deep-merge x y)
-
-        (and (coll? x) (coll? y))
-        (into x y)
-
-        :else y))
-
-(defn- build-clauses-from-range
-  "The strategy: In general, maintain a volatile reference to the result.
-
-  If the range is a vector/set, the result will be a transient []/#{}.
-  At each leaf, evaluate the range and 'vswap! into!' it into the maintained result.
-  At the end of the fn, just call persistent! on the result.
-  You might think the volatile ref is extraneous since we're using transients, but
-  fns like `conj!` are meant to be used for the result they return, not for their side-effects.
-  (This caused a weird bug.)
-
-  If the range is a map, then the result is a persistent
-  map. Initially, I had created functions like assoc-in! and
-  update-in! that worked on nested map transients, but found that
-  these were actually slower than just merging a bunch of small
-  persistent maps together. I'm not really sure why this was the
-  case. Anyway, at each leaf, evaluate the range and deep merge it
-  into the result. At the end, just return the result. "
-  [range result-sym]
-  (cond (or (vector? range) (set? range))
-        {:init `(volatile! ~(if (vector? range) `(transient []) `(transient #{})))
-         :return `(vswap! ~result-sym persistent!)
-         :modifier (if (= (count range) 1)
-                     `(vswap! ~result-sym conj! ~(first range))
-                     `(vswap! ~result-sym (fn [x#] (into! x# ~range))))}
-
-        (map? range)
-        {:init `(volatile! {})
-         :return `(deref ~result-sym)
-         :modifier `(vswap! ~result-sym deep-merge ~range)}))
-
 (defn- build-traverser
   [{:keys [bindings where child] :as domain}
    id->sym
@@ -175,11 +127,12 @@
         structure-sym (gensym "structure")
 
         pdomain (parse/parse domain where)
+        domain-bound-symbols (parse/symbols domain)
 
         {inner-modifier-clause :modifier
          return-clause         :return
          init-result           :init}
-        (build-clauses-from-range range result-sym)]
+        (parse-range/build-clauses-from-range domain-bound-symbols range result-sym)]
 
     `(fn [~structure-sym]
        (let [~result-sym ~init-result]
