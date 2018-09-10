@@ -362,7 +362,25 @@
   (is (= (f/transform [1 2 3 1 2 3] [x] (apply max [x (count [x])]))
          6))
   (is (= (f/transform [1 2 3 1 2 3] [x] (count #{x}))
-         3)))
+         3))
+  (is (= (f/transform {:a [1 2 3],
+                       :b [8 9 5],
+                       :d [4 5 6]}
+                      {k [v]}
+                      #{(apply max [v])})
+         #{9}))
+
+  ;; readme
+  (is (= (f/transform {:a [1 2 3],
+                       :b [8 9 5],
+                       :d [4 5 6]}
+                      {k [v]}
+                      (apply max [v]))
+         9))
+
+
+
+  )
 
 (deftest complicated-reducers
   (let [student-data
@@ -402,6 +420,7 @@
                         :where [(> grade1 95)])
            {"math" 1, "english" 1}))
 
+    ;;readme
     (is (= (f/transform student-data
                         [{:keys [student grade1 grade2 course campus]}]
                         {campus {:number-students (count #{student})

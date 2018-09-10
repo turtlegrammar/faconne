@@ -6,25 +6,27 @@
             #?(:clj [clojure.core.match :refer [match]]
                :cljs [cljs.core.match :refer-macros [match]])))
 
+;; This namespace handles
+
 (defn spy [x] (pprint/pprint x) x)
 
+;; Reduce Data represents
 (defn make-reduce-data
   [reducefn data type]
   {::reducefn reducefn
    ::data data
-   ::type type
-   ::is-reduce-data? true})
+   ::type type})
 
-(defn reducedata? [x] (boolean (::is-reduce-data? x)))
+(defn reducedata? [x] (boolean (::type x)))
 
 (defn deep-merge
   [x y]
   (cond (reducedata? x)
-        (do (make-reduce-data (::reducefn x)
-                              (if (= (::type x) :leaf)
-                                (deep-merge (::data x) (::data y))
-                                (mapv deep-merge (::data x) (::data y)))
-                              (::type x)))
+        (make-reduce-data (::reducefn x)
+                          (if (= (::type x) :leaf)
+                            (deep-merge (::data x) (::data y))
+                            (mapv deep-merge (::data x) (::data y)))
+                          (::type x))
 
         (and (map? x) (map? y))
         (merge-with deep-merge x y)
@@ -36,22 +38,16 @@
 
 (defn eval-reduce-data
   [reduce-data]
-  ;; (spy {:before-eval reduce-data})
-  (let [go (fn [x]
-             (case (::type x)
-               :vector (::data x)
-               :map (reduce deep-merge (::data x))
-               :set (::data x)
-               :leaf (::data x)
-               :reduce (apply (::reducefn x) (::data x))))
-        evaluated-children (walk/postwalk (fn [y]
-                                            (if (reducedata? y) (go y) y))
-                                          reduce-data)]
-    evaluated-children
-    ;; (if (::reducefn reduce-data)
-    ;;   ((::reducefn reduce-data) evaluated-children)
-    ;;   (first evaluated-children))
-    ))
+  (walk/postwalk (fn [x]
+                   (if (reducedata? x)
+                     (case (::type x)
+                       :vector (::data x)
+                       :map (reduce deep-merge (::data x))
+                       :set (set (::data x))
+                       :leaf (::data x)
+                       :reduce (apply (::reducefn x) (::data x)))
+                     x))
+                 reduce-data))
 
 (defn child-forms
   [form]
@@ -119,7 +115,7 @@
                       (set? range)
                       `(make-reduce-data
                         nil
-                        ~(set (mapv go range))
+                        ~(mapv go range)
                         :set)
 
                       (list? range)
