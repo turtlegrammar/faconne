@@ -6,25 +6,45 @@
             #?(:clj [clojure.core.match :refer [match]]
                :cljs [cljs.core.match :refer-macros [match]])))
 
-;; This namespace handles
 
 (defn spy [x] (pprint/pprint x) x)
 
-;; Reduce Data represents
+;; Reduce Data represents a collection that needs to be reduced after being
+;; fully created.
+;; For example, (f/transform [1 2 3] [x] (apply max [x]))
+;; requires reducing logic on [x] in the range, since we're running
+;; `apply max` on it after creating it.
 (defn make-reduce-data
   [reducefn data type]
+  ;; A function that has a number of arguments equal to the number of
+  ;; substructures in data. Used after data is fully built.
   {::reducefn reducefn
+   ;; A collection of substructures (collection built up over the transform)
+   ;; that the reducefn will act on
    ::data data
+   ;; leaf (no more reducedatas down this branch), reduce (custom
+   ;; reducing fn), map, vector, set
    ::type type})
 
+;; This is hacky -- is there a better way to do this?
+;; I tried a record, but (= (type x) RecordData) didn't always work.
 (defn reducedata? [x] (boolean (::type x)))
 
 (defn deep-merge
   [x y]
   (cond (reducedata? x)
+        ;; Both have the same reducefn
         (make-reduce-data (::reducefn x)
                           (if (= (::type x) :leaf)
+                            ;; Leaves are collections with no more
+                            ;; reducedatas in them. They're built by
+                            ;; the transform, so we deep merge, as if
+                            ;; doing a normal transform.
                             (deep-merge (::data x) (::data y))
+                            ;; Otherwise data is a collection of substructures,
+                            ;; meaning each element in data is a separate coll
+                            ;; being built by the transform.
+                            ;; So we piece-wise deep-merge these.
                             (mapv deep-merge (::data x) (::data y)))
                           (::type x))
 
@@ -37,7 +57,12 @@
         :else y))
 
 (defn eval-reduce-data
+  "Now that the reducedata's substructures are fully built, apply
+  the reducing functions to them."
   [reduce-data]
+  ;; This could possibly be made more efficient by manually walking
+  ;; the data structure, since we don't need to further traverse leaves,
+  ;; and leaves are likely to be collection with many elements.
   (walk/postwalk (fn [x]
                    (if (reducedata? x)
                      (case (::type x)
@@ -61,14 +86,23 @@
    (set/intersection domain-bound-symbols (set (child-forms form)))))
 
 (defn reducable-substructures
+  "Find the topmost child forms that use collections built in the transform.
+
+  For example, if we have (max (apply max [g1]) (apply max [g2])) and both
+  g1 and g2 are domain-bound, then this returns
+  [[g1] [g2]].
+
+  By replacing these substructures with gensyms, we get the reducing fn:
+  (fn [g1-sym g2-sym] (max (apply max g1-sym) (apply max g2-sym)))
+
+  (see build-reducer)."
   [domain-bound-symbols form]
-  (let [substructures (atom [])]
-    (letfn [(go [child-form]
-                (when (uses-symbol? domain-bound-symbols child-form)
-                  (cond (list? child-form) (mapv go child-form)
-                        :else (swap! substructures conj child-form))))]
-      (go form))
-    @substructures))
+  (if (uses-symbol? domain-bound-symbols form)
+    (if (list? form)
+      (->> (mapv #(reducable-substructures domain-bound-symbols %) form)
+           (reduce into []))
+      [form])
+    []))
 
 (defn build-reducer
   [substructures form]
@@ -81,9 +115,18 @@
     (boolean
      (some (fn [child]
              (let [grandchildren (child-forms child)]
+               ;; If the child is a list, that means there's a function call.
                (and (list? child)
+                    ;; A function call doesn't necessitate reducing logic by
+                    ;; itself. For example (transform [x] [(inc x)]) doesn't
+                    ;; reduce a collection.
+                    ;; So, additionally, there must be a child of the child
+                    ;; (called grandchild/gc) that is transformation-built
+                    ;; collection (i.e., map/vector/set and uses a domain
+                    ;; bound symbol)
                     (some (fn [gc]
                             (cond (map? gc)
+                                  ;; we don't support transform logic in keys
                                   (some #(uses-symbol? domain-bound-symbols %) (vals gc))
 
                                   (or (set? gc) (vector? gc))
@@ -95,6 +138,10 @@
 
 (defn convert-range-to-reducable
   [domain-bound-symbols form]
+  ;; The strategy for dealing with ranges that have reducing logic is
+  ;; to build up a result of reducedata objects instead of native clojure
+  ;; collections, then evaluate them (i.e., run the reducers) at the end
+  ;; of the transform, once all the collections have been fully built.
   (letfn [(go [range]
               (if (requires-reducing-logic? domain-bound-symbols range)
                 (cond (map? range)
@@ -118,6 +165,7 @@
                         ~(mapv go range)
                         :set)
 
+                      ;; We have a function call, and we know from above we require reducing logic.
                       (list? range)
                       (let [substructures (reducable-substructures domain-bound-symbols range)
                             reducer (build-reducer substructures range)]
@@ -161,7 +209,8 @@
   (let [use-reducables? (requires-reducing-logic? domain-bound-symbols range)]
     (if use-reducables?
       (let [converted-range (convert-range-to-reducable domain-bound-symbols range)]
-        ;; this is always going to be a map
+        ;; this is always going to be a map, since reducedata is a map,
+        ;; and we're building a reducedata object which we'll evaluate at the end.
         {:init `(volatile! {})
          :return `(eval-reduce-data (deref ~result-sym))
          :modifier `(vswap! ~result-sym deep-merge ~converted-range)})

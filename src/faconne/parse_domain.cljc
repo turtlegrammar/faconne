@@ -1,4 +1,4 @@
-(ns faconne.parse
+(ns faconne.parse-domain
   (:require [clojure.set :as set]
             [faconne.util :refer [error]]
             [clojure.walk :as walk]

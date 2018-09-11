@@ -1,12 +1,12 @@
 (ns faconne.compile
-  (:require [faconne.parse :as parse]
-            [faconne.parse-range :as parse-range]
+  (:require [faconne.parse-domain :as domain]
+            [faconne.parse-range :as range]
             #?(:clj [clojure.core.match :refer [match]]
                :cljs [cljs.core.match :refer-macros [match]])))
 
 (defn- gen-binding
-  "Takes a binding type (parse/parse-domain) and map from binding ids
-  to their symbols (parse/assign-bind-ids). Associated with the binding type
+  "Takes a binding type (domain/parse-domain) and map from binding ids
+  to their symbols (domain/assign-bind-ids). Associated with the binding type
   is a parent-sym, which we lookup in the `id->sym` map to get an rvalue to bind
   against."
   [{:keys [type parent-id id] :as binding}
@@ -115,10 +115,10 @@
 
 (defn gen-iterator
   [domain action where]
-  (let [pdomain (parse/parse domain where)
+  (let [pdomain (domain/parse domain where)
         structure-sym (gensym "structure")]
     `(fn [~structure-sym]
-       ~(build-traverser pdomain {parse/first-bind-id structure-sym} action)
+       ~(build-traverser pdomain {domain/first-bind-id structure-sym} action)
        nil)))
 
 (defn gen-transformer
@@ -126,15 +126,15 @@
   (let [result-sym    (gensym "result")
         structure-sym (gensym "structure")
 
-        pdomain (parse/parse domain where)
-        domain-bound-symbols (parse/symbols domain)
+        pdomain (domain/parse domain where)
+        domain-bound-symbols (domain/symbols domain)
 
         {inner-modifier-clause :modifier
          return-clause         :return
          init-result           :init}
-        (parse-range/build-clauses-from-range domain-bound-symbols range result-sym)]
+        (range/build-clauses-from-range domain-bound-symbols range result-sym)]
 
     `(fn [~structure-sym]
        (let [~result-sym ~init-result]
-         ~(build-traverser pdomain {parse/first-bind-id structure-sym} inner-modifier-clause)
+         ~(build-traverser pdomain {domain/first-bind-id structure-sym} inner-modifier-clause)
          ~return-clause))))
