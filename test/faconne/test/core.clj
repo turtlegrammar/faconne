@@ -376,11 +376,7 @@
                        :d [4 5 6]}
                       {k [v]}
                       (apply max [v]))
-         9))
-
-
-
-  )
+         9)))
 
 (deftest complicated-reducers
   (let [student-data
