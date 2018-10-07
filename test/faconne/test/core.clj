@@ -146,10 +146,10 @@
                          "Ben Bitdiddle" #{"Abelson"}}]
 
     ;; todo: fix
-    ;; (is (= (f/transform profs->classes->students
-    ;;                     {prof {_ [student]}}
-    ;;                     {(:name student) #{prof}})
-    ;;        students->profs))
+    (is (= (f/transform profs->classes->students
+                        {prof {_ [student]}}
+                        {(:name student) #{prof}})
+           students->profs))
 
     (is (= (f/transform profs->classes->students
                         {prof {_ [{:keys [name]}]}}
@@ -357,8 +357,6 @@
          3))
   (is (= (f/transform [1 2 3 1 2 3] [x] (apply max [x (inc x)]))
          4))
-  (is (= (f/transform [1 2 3 1 2 3] [x] [x (count [x])])
-         [1 6 2 6 3 6 1 6 2 6 3 6]))
   (is (= (f/transform [1 2 3 1 2 3] [x] (apply max [x (count [x])]))
          6))
   (is (= (f/transform [1 2 3 1 2 3] [x] (count #{x}))

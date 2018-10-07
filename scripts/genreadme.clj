@@ -6,7 +6,8 @@
 
 (defn gen [lines]
   (let [wrap-src (fn [x] (str "```clj \n" x "\n```"))
-        wrap-header (fn [x] (str "##" x))]
+        wrap-header (fn [x] (str "##" x))
+        wrap-small-header (fn [x] (str "###" x))]
     (loop [[line & rest-lines] lines
            output ""]
       (letfn [(get-src [lines]
@@ -29,6 +30,9 @@
         (if line
           (cond (.startsWith line ";;;;;")
                 (recur rest-lines output)
+
+                (.startsWith line ";;;;2")
+                (recur rest-lines (str output "\n" (wrap-small-header (string/join (drop 5 line))) "\n"))
 
                 (.startsWith line ";;;;")
                 (recur rest-lines (str output "\n" (wrap-header (string/join (drop 4 line))) "\n"))
