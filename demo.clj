@@ -6,18 +6,14 @@
   (:require [faconne.core :as f]))
 
 
-;;;;2 New in 1.1.0
-;;; - Revamped README with examples inspired by a year of using faconne in a production code base.
-;;;;
-;;; - Allowing functions to be called on collections built up in range. For example
-(f/transform {:x [1 2 3], :y [4 5 6]} {k [v]} (apply max [v])) ;; => 6
-
+;;;;2 See the [change log](changelog.md)
+;;; Note: 1.1.0 -> 1.1.1 may require a migration, but 1.0.x -> 1.1.1 does not.
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; Include
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;;; Lein: `[faconne "1.1.0"]`
+;;; Lein: `[faconne "1.1.1"]`
 
 ;;; Import for Clojure:
 (ns demo
@@ -62,8 +58,10 @@
 (def organized-student-data
   (f/transform student-data
                [{:keys [student grade course campus]}]
-               {campus {:number-students (count #{student})
-                        :avg-grade-per-course {course (average [grade])}
+               ;; ^:expand denotes that the collection should be fully built up
+               ;; before the surrounding code is executed.
+               {campus {:number-students (count ^:expand #{student})
+                        :avg-grade-per-course {course (average ^:expand [grade])}
                         :student-grades {student {course grade}}}}))
 
 ;; (Note that `count`, and `average` are normal Clojure functions
@@ -176,6 +174,51 @@
  , "2018-08-11"
  {:handled {"add-user" ["jocelyn"]},
   :unhandled {"remove-user" ["steve"]}}}
+
+;;;;2 Reducing
+
+;; Suppose we want to find the number of classes each student is in:
+(f/transform {"math" {2062 #{"John", "Mary", "Paul", "Susan"}
+                      4001 #{"Mary", "Tone", "Mike"}}
+              "history" {6000 #{"John", "Paul", "Susan", "Tone"}
+                         3052 #{"Tone", "Mike", "Susan"}}}
+             {category {course-number #{student}}}
+             {student (count ^:expand #{course-number})})
+;; =>
+{"Susan" 3, "Mary" 2, "John" 2, "Paul" 2, "Tone" 3, "Mike" 2}
+
+;; Faconne typically works by evaluating the range of the transform
+;; (in this case, `{student (count ^:expand #{course-number})}`)
+;; at each leaf of the domain
+;; (in this case, `{category {course-number #{student}}}`)
+;; then deep merging the results.
+
+;; But sometimes you want to only partially evaluate the range
+;; at each leaf, and wait until a collection is fully built up
+;; before applying a function -- like `count` -- to it.
+;; To denote this, tag the collection with `^:expand` metadata.
+
+;; Faconne makes you opt-in for reducing logic, because I've found that,
+;; while both are useful, wanting to evaluate at each leaf and deep merge
+;; is more common than wanting to reduce over a collection built up in the transform. An example of the former:
+
+(f/transform {"math" {2062 #{"John", "Mary", "Paul", "Susan"}
+                      4001 #{"Mary", "Tone", "Mike"}}
+              "history" {6000 #{"John", "Paul", "Susan", "Tone"}
+                         3052 #{"Tone", "Mike", "Susan"}}}
+             {category {course-number #{student}}}
+             {student (if (< 4000 course-number)
+                        {:undergraduate #{course-number}}
+                        {:graduate #{course-number}})})
+
+;; =>
+{"Susan" {:graduate #{2062 3052}, :undergraduate #{6000}},
+ "Mary" {:graduate #{2062}, :undergraduate #{4001}},
+ "John" {:graduate #{2062}, :undergraduate #{6000}},
+ "Paul" {:graduate #{2062}, :undergraduate #{6000}},
+ "Tone" {:undergraduate #{4001 6000}, :graduate #{3052}},
+ "Mike" {:undergraduate #{4001}, :graduate #{3052}}}
+
 
 ;;;;2 Inverting
 (f/transform {"GYU-6749" 1

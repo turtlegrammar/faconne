@@ -125,14 +125,16 @@
                     ;; collection (i.e., map/vector/set and uses a domain
                     ;; bound symbol)
                     (some (fn [gc]
-                            (cond (map? gc)
-                                  ;; we don't support transform logic in keys
-                                  (some #(uses-symbol? domain-bound-symbols %) (vals gc))
+                            ;; have to opt-in on the collection
+                            (and (:expand (meta gc))
+                                 (cond (map? gc)
+                                       ;; we don't support transform logic in keys
+                                       (some #(uses-symbol? domain-bound-symbols %) (vals gc))
 
-                                  (or (set? gc) (vector? gc))
-                                  (uses-symbol? domain-bound-symbols gc)
+                                       (or (set? gc) (vector? gc))
+                                       (uses-symbol? domain-bound-symbols gc)
 
-                                  :else false))
+                                       :else false)))
                           grandchildren))))
            children))))
 
