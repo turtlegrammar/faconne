@@ -353,19 +353,19 @@
 ;;;;;;;;;;;;;;
 
 (deftest simple-reducers
-  (is (= (f/transform [1 2 3 1 2 3] [x] (apply max [x]))
+  (is (= (f/transform [1 2 3 1 2 3] [x] (apply max ^:expand [x]))
          3))
-  (is (= (f/transform [1 2 3 1 2 3] [x] (apply max [x (inc x)]))
+  (is (= (f/transform [1 2 3 1 2 3] [x] (apply max ^:expand [x (inc x)]))
          4))
-  (is (= (f/transform [1 2 3 1 2 3] [x] (apply max [x (count [x])]))
+  (is (= (f/transform [1 2 3 1 2 3] [x] (apply max ^:expand [x (count ^:expand [x])]))
          6))
-  (is (= (f/transform [1 2 3 1 2 3] [x] (count #{x}))
+  (is (= (f/transform [1 2 3 1 2 3] [x] (count ^:expand #{x}))
          3))
   (is (= (f/transform {:a [1 2 3],
                        :b [8 9 5],
                        :d [4 5 6]}
                       {k [v]}
-                      #{(apply max [v])})
+                      #{(apply max ^:expand [v])})
          #{9}))
 
   ;; readme
@@ -373,7 +373,7 @@
                        :b [8 9 5],
                        :d [4 5 6]}
                       {k [v]}
-                      (apply max [v]))
+                      (apply max ^:expand [v]))
          9)))
 
 (deftest complicated-reducers
@@ -391,34 +391,34 @@
 
     (is (= (f/transform student-data
                         [{:keys [student grade1 grade2 course]}]
-                        {student (apply max [grade2])})
+                        {student (apply max ^:expand [grade2])})
            {"john" 89, "dave" 90, "mary" 86}))
 
     (is (= (f/transform student-data
                         [{:keys [student grade1 grade2 course]}]
-                        {student (max (apply max [grade1])
-                                      (apply max [grade2]))})
+                        {student (max (apply max ^:expand [grade1])
+                                      (apply max ^:expand [grade2]))})
            {"john" 97, "dave" 100, "mary" 94}))
 
     (is (= (f/transform student-data
                         [{:keys [student grade1 grade2 course] :as tuple}]
                         {student (:course (apply max-key
                                                  :grade
-                                                 [{:grade (/ (+ grade1 grade2) 2),
+                                                 ^:expand [{:grade (/ (+ grade1 grade2) 2),
                                                    :course course}]))})
            {"john" "math", "dave" "english", "mary" "history"}))
 
     (is (= (f/transform student-data
                         [{:keys [student grade1 grade2 course]}]
-                        {course (count [student])}
+                        {course (count ^:expand [student])}
                         :where [(> grade1 95)])
            {"math" 1, "english" 1}))
 
     ;;readme
     (is (= (f/transform student-data
                         [{:keys [student grade1 grade2 course campus]}]
-                        {campus {:number-students (count #{student})
-                                 :avg-grade-per-course {course (average [grade1])}
+                        {campus {:number-students (count ^:expand #{student})
+                                 :avg-grade-per-course {course (average ^:expand [grade1])}
                                  :student-stats {student {course grade1}}}})
            {"east"
             {:number-students 2,
@@ -438,3 +438,13 @@
              :student-stats {"mary" {"math" 90,
                                      "english" 92,
                                      "history" 94}}}}))))
+
+
+;; Issue #3 on Github.
+(deftest test-expression-collections
+  (is (= (f/transform [1 2 3 4 5 6]
+                      [x]
+                      {(if (even? x) :even :odd)
+                       (if (even? x) [(* 2 x)] [(+ 1 x)])})
+         {:even [4 8 12]
+          :odd [2 4 6]})))
